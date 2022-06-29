@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/rancher/charts-build-scripts/pkg/charts"
@@ -20,6 +18,14 @@ import (
 	"helm.sh/helm/v3/pkg/repo"
 
 	"sigs.k8s.io/yaml"
+)
+
+const (
+	artifactHubApi        = "https://artifacthub.io/api/v1/packages/helm"
+	repositoryPackagesDir = "packages"
+	repositoryChartsDir   = "charts"
+	packageOptionsFile    = "package.yaml"
+	upstreamOptionsFile   = "upstream.yaml"
 )
 
 type ArtifactHubApiHelmRepo struct {
@@ -43,12 +49,20 @@ type ChartSourceMetadata struct {
 	FileName    string
 	Name        string
 	Org         string
+	PackageYaml PackageYaml
 	Source      string
 	Url         string
 	Version     string
 }
 
 type PackageYaml struct {
+	Url            string `json:"url"`
+	SubDirectory   string `json:"subdirectory,omitempty"`
+	Commit         string `json:"commit,omitempty"`
+	PackageVersion string `json:"packageVersion,omitempty"`
+}
+
+type UpstreamYaml struct {
 	ChartYaml       chart.Metadata `json:"Chart.yaml"`
 	DisplayName     string         `json:"DisplayName"`
 	AHPackageName   string         `json:"ArtifactHubPackage"`
@@ -61,8 +75,17 @@ type PackageYaml struct {
 	ReleaseName     string         `json:"ReleaseName"`
 }
 
-func fetch_upstream_helmrepo(packagePath string, packageYaml PackageYaml) ChartSourceMetadata {
-	url := fmt.Sprintf("%s/index.yaml", packageYaml.HelmRepoUrl)
+func getRepoRoot() string {
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		logrus.Debug(err)
+	}
+
+	return repoRoot
+}
+
+func fetch_upstream_helmrepo(upstreamYaml UpstreamYaml) ChartSourceMetadata {
+	url := fmt.Sprintf("%s/index.yaml", upstreamYaml.HelmRepoUrl)
 
 	indexYaml := repo.NewIndexFile()
 	chartSourceMeta := ChartSourceMetadata{}
@@ -86,43 +109,24 @@ func fetch_upstream_helmrepo(packagePath string, packageYaml PackageYaml) ChartS
 
 	indexYaml.SortEntries()
 
-	chartEntries := indexYaml.Entries[packageYaml.HelmRepoChart]
+	chartEntries := indexYaml.Entries[upstreamYaml.HelmRepoChart]
 	latestEntry := chartEntries[0]
 
 	chartSourceMeta.Name = latestEntry.Metadata.Name
 	chartSourceMeta.DisplayName = latestEntry.Metadata.Name
-	fmt.Println(latestEntry.URLs[0])
+	logrus.Infoln(latestEntry.URLs[0])
 	chartSourceMeta.Url = latestEntry.URLs[0]
-	fmt.Println(latestEntry.Version)
+	logrus.Infoln(latestEntry.Version)
 	chartSourceMeta.Version = latestEntry.Version
-
-	contentResp, err := http.Get(chartSourceMeta.Url)
-	if err != nil {
-		logrus.Debug(err)
-	}
-
-	defer contentResp.Body.Close()
-
-	chartUrlSplit := strings.Split(chartSourceMeta.Url, "/")
-	chartSourceMeta.FileName = packagePath + chartUrlSplit[len(chartUrlSplit)-1]
-
-	chartTgz, err := os.Create(chartSourceMeta.FileName)
-	if err != nil {
-		logrus.Debug(err)
-	}
-
-	defer chartTgz.Close()
-
-	_, err = io.Copy(chartTgz, contentResp.Body)
-	if err != nil {
-		logrus.Debug(err)
+	chartSourceMeta.PackageYaml = PackageYaml{
+		Url: chartSourceMeta.Url,
 	}
 
 	return chartSourceMeta
 }
 
-func fetch_upstream_artifacthub(packagePath string, packageYaml PackageYaml) ChartSourceMetadata {
-	url := fmt.Sprintf("https://artifacthub.io/api/v1/packages/helm/%s/%s", packageYaml.AHRepoName, packageYaml.AHPackageName)
+func fetch_upstream_artifacthub(upstreamYaml UpstreamYaml) ChartSourceMetadata {
+	url := fmt.Sprintf("%s/%s/%s", artifactHubApi, upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
 
 	apiResp := ArtifactHubApiHelm{}
 	chartSourceMeta := ChartSourceMetadata{}
@@ -146,85 +150,70 @@ func fetch_upstream_artifacthub(packagePath string, packageYaml PackageYaml) Cha
 	chartSourceMeta.Org = apiResp.Repository.OrgName
 	chartSourceMeta.Url = apiResp.ContentUrl
 	chartSourceMeta.Version = apiResp.Version
-
-	contentResp, err := http.Get(chartSourceMeta.Url)
-	if err != nil {
-		logrus.Debug(err)
-	}
-
-	defer contentResp.Body.Close()
-
-	chartUrlSplit := strings.Split(chartSourceMeta.Url, "/")
-	chartSourceMeta.FileName = packagePath + chartUrlSplit[len(chartUrlSplit)-1]
-
-	chartTgz, err := os.Create(chartSourceMeta.FileName)
-	if err != nil {
-		logrus.Debug(err)
-	}
-
-	defer chartTgz.Close()
-
-	_, err = io.Copy(chartTgz, contentResp.Body)
-	if err != nil {
-		logrus.Debug(err)
+	chartSourceMeta.PackageYaml = PackageYaml{
+		Url: chartSourceMeta.Url,
 	}
 
 	return chartSourceMeta
 }
 
-func fetch_upstream_git(packagePath string, packageYaml PackageYaml) ChartSourceMetadata {
+func fetch_upstream_git(packageName string, upstreamYaml UpstreamYaml) ChartSourceMetadata {
 	cloneOptions := git.CloneOptions{}
-	cloneOptions.URL = packageYaml.GitRepoUrl
+	cloneOptions.URL = upstreamYaml.GitRepoUrl
 	cloneOptions.Depth = 1
-	if packageYaml.GitBranch != "" {
-		cloneOptions.RemoteName = packageYaml.GitBranch
+	if upstreamYaml.GitBranch != "" {
+		cloneOptions.RemoteName = upstreamYaml.GitBranch
 	}
 
-	gitDirectory := packagePath + "clone/"
-	_, err := git.PlainClone(gitDirectory, false, &cloneOptions)
+	gitDirectory := getRepoRoot() + "/" + repositoryPackagesDir + "/" + packageName + "/clone"
+	r, err := git.PlainClone(gitDirectory, false, &cloneOptions)
+	if err != nil {
+		logrus.Debug(err)
+	}
+
+	ref, err := r.Head()
 	if err != nil {
 		logrus.Debug(err)
 	}
 
 	sourcePath := gitDirectory
-	targetPath := packagePath + "upstream"
-	if packageYaml.GitSubDirectory != "" {
-		sourcePath = sourcePath + packageYaml.GitSubDirectory
+	if upstreamYaml.GitSubDirectory != "" {
+		sourcePath = sourcePath + "/" + upstreamYaml.GitSubDirectory
 	}
-	err = os.Rename(sourcePath, targetPath)
+	helmChart, err := loader.Load(sourcePath)
 	if err != nil {
 		logrus.Debug(err)
 	}
+
+	chartSourceMeta := ChartSourceMetadata{
+		DisplayName: helmChart.Metadata.Name,
+		Name:        helmChart.Metadata.Name,
+		Url:         upstreamYaml.GitRepoUrl,
+		Version:     helmChart.Metadata.Version,
+		Source:      "Git",
+		PackageYaml: PackageYaml{
+			Url:          upstreamYaml.GitRepoUrl,
+			Commit:       ref.Hash().String(),
+			SubDirectory: upstreamYaml.GitSubDirectory,
+		},
+	}
+
 	err = os.RemoveAll(gitDirectory)
 	if err != nil {
 		logrus.Debug(err)
 	}
 
-	chartSourceMeta := ChartSourceMetadata{}
-	chartSourceMeta.FileName = targetPath
-
-	helmChart, err := loader.Load(chartSourceMeta.FileName)
-	if err != nil {
-		logrus.Debug(err)
-	}
-
-	chartSourceMeta.DisplayName = helmChart.Metadata.Name
-	chartSourceMeta.Name = helmChart.Metadata.Name
-	chartSourceMeta.Url = packageYaml.GitRepoUrl
-	chartSourceMeta.Version = helmChart.Metadata.Version
-	chartSourceMeta.Source = "Git"
-
 	return chartSourceMeta
 
 }
 
-func fetch_upstream(packagePath string, packageYaml PackageYaml) (ChartSourceMetadata, error) {
-	if packageYaml.AHPackageName != "" && packageYaml.AHRepoName != "" {
-		return fetch_upstream_artifacthub(packagePath, packageYaml), nil
-	} else if packageYaml.HelmRepoUrl != "" {
-		return fetch_upstream_helmrepo(packagePath, packageYaml), nil
-	} else if packageYaml.GitRepoUrl != "" {
-		return fetch_upstream_git(packagePath, packageYaml), nil
+func fetch_upstream(packageName string, upstreamYaml UpstreamYaml) (ChartSourceMetadata, error) {
+	if upstreamYaml.AHPackageName != "" && upstreamYaml.AHRepoName != "" {
+		return fetch_upstream_artifacthub(upstreamYaml), nil
+	} else if upstreamYaml.HelmRepoUrl != "" {
+		return fetch_upstream_helmrepo(upstreamYaml), nil
+	} else if upstreamYaml.GitRepoUrl != "" {
+		return fetch_upstream_git(packageName, upstreamYaml), nil
 	} else {
 		err := errors.New("no repo url Found")
 		return ChartSourceMetadata{}, err
@@ -287,26 +276,41 @@ func overlayChartMetadata(chartMetadata chart.Metadata, overlay chart.Metadata) 
 	return &chartMetadata
 }
 
-func parsePackageYaml(filePath string) (PackageYaml, error) {
-	packageYamlFile, err := ioutil.ReadFile(filePath)
-	packageYaml := PackageYaml{}
+func parseUpstreamYaml(filePath string) (UpstreamYaml, error) {
+	upstreamYamlFile, err := ioutil.ReadFile(filePath)
+	upstreamYaml := UpstreamYaml{}
 	if err != nil {
 		logrus.Debug(err)
 	} else {
-		err = yaml.Unmarshal(packageYamlFile, &packageYaml)
+		err = yaml.Unmarshal(upstreamYamlFile, &upstreamYaml)
 	}
 
-	return packageYaml, err
+	return upstreamYaml, err
 }
 
-func loadAndOverlayChart(packagePath string, packageYaml PackageYaml) (*chart.Chart, error) {
-	chartSourceMeta, err := fetch_upstream(packagePath, packageYaml)
+func loadAndOverlayChart(packageName string, upstreamYaml UpstreamYaml) (*chart.Chart, error) {
+	packagePath := getRepoRoot() + "/" + repositoryPackagesDir + "/" + packageName
+	chartSourceMeta, err := fetch_upstream(packagePath, upstreamYaml)
 	if err != nil {
 		err := errors.New("package yaml does not contain required values")
 		return nil, err
 	}
+	createPackageYaml(packagePath, chartSourceMeta)
+	packages, _ := charts.GetPackages(getRepoRoot(), packageName)
+	err = packages[0].Prepare()
+	if err != nil {
+		logrus.Errorln("Chart prepare failed. Cleaning up and skipping...")
+		packages[0].Clean()
+		return nil, err
+	}
 
-	fmt.Printf("  Source: %s\n  Organization: %s\n  Chart: %s\n  Version: %s\n  URL: %s  \n",
+	chartSourceMeta.FileName = packagePath + "/" + repositoryChartsDir
+
+	if _, err := os.Stat(chartSourceMeta.FileName + "/Chart.yaml.orig"); !os.IsNotExist(err) {
+		os.Remove(chartSourceMeta.FileName + "/Chart.yaml.orig")
+	}
+
+	logrus.Infof("\n  Source: %s\n  Organization: %s\n  Chart: %s\n  Version: %s\n  URL: %s  \n",
 		chartSourceMeta.Source, chartSourceMeta.Org, chartSourceMeta.Name, chartSourceMeta.Version, chartSourceMeta.Url)
 
 	helmChart, err := loader.Load(chartSourceMeta.FileName)
@@ -314,53 +318,65 @@ func loadAndOverlayChart(packagePath string, packageYaml PackageYaml) (*chart.Ch
 		logrus.Debug(err)
 	}
 
-	if fi, _ := os.Stat(chartSourceMeta.FileName); fi.IsDir() {
-		err = os.RemoveAll(chartSourceMeta.FileName)
-	} else {
-		err = os.Remove(chartSourceMeta.FileName)
-	}
+	helmChart.Metadata = overlayChartMetadata(*helmChart.Metadata, upstreamYaml.ChartYaml)
 
-	helmChart.Metadata = overlayChartMetadata(*helmChart.Metadata, packageYaml.ChartYaml)
+	err = packages[0].GeneratePatch()
+	if err != nil {
+		logrus.Debug(err)
+	}
+	/*
+		err = packages[0].Clean()
+		if err != nil {
+			logrus.Debug(err)
+		}
+	*/
+
+	err = packages[0].GenerateCharts(true)
 
 	if helmChart.Metadata.Annotations == nil {
 		helmChart.Metadata.Annotations = make(map[string]string)
 	}
 
-	if packageYaml.DisplayName != "" {
-		chartSourceMeta.DisplayName = packageYaml.DisplayName
+	if upstreamYaml.DisplayName != "" {
+		chartSourceMeta.DisplayName = upstreamYaml.DisplayName
 	}
-	if packageYaml.ReleaseName != "" {
-		chartSourceMeta.Name = packageYaml.ReleaseName
+	if upstreamYaml.ReleaseName != "" {
+		chartSourceMeta.Name = upstreamYaml.ReleaseName
 	}
 
-	if _, ok := helmChart.Metadata.Annotations["catalogrus.cattle.io/certified"]; !ok {
-		helmChart.Metadata.Annotations["catalogrus.cattle.io/certified"] = "partner"
+	if _, ok := helmChart.Metadata.Annotations["catalog.cattle.io/certified"]; !ok {
+		helmChart.Metadata.Annotations["catalog.cattle.io/certified"] = "partner"
 	}
-	if _, ok := helmChart.Metadata.Annotations["catalogrus.cattle.io/display-name"]; !ok {
-		helmChart.Metadata.Annotations["catalogrus.cattle.io/display-name"] = chartSourceMeta.DisplayName
+	if _, ok := helmChart.Metadata.Annotations["catalog.cattle.io/display-name"]; !ok {
+		helmChart.Metadata.Annotations["catalog.cattle.io/display-name"] = chartSourceMeta.DisplayName
 	}
-	if _, ok := helmChart.Metadata.Annotations["catalogrus.cattle.io/release-name"]; !ok {
-		helmChart.Metadata.Annotations["catalogrus.cattle.io/release-name"] = chartSourceMeta.Name
+	if _, ok := helmChart.Metadata.Annotations["catalog.cattle.io/release-name"]; !ok {
+		helmChart.Metadata.Annotations["catalog.cattle.io/release-name"] = chartSourceMeta.Name
 	}
 
 	return helmChart, err
 }
 
 func fetchPackages(packageList []string) {
+	skipped := make([]string, 0)
 	for _, currentPackage := range packageList {
-		fmt.Printf("Parsing %s\n", currentPackage)
-		packagePath := "packages/" + currentPackage + "/"
-		packageYamlPath := packagePath + "package.yaml"
+		packagePath := repositoryPackagesDir + "/" + currentPackage
+		upstreamYamlPath := packagePath + "/" + upstreamOptionsFile
+		if _, err := os.Stat(upstreamYamlPath); os.IsNotExist(err) {
+			continue
+		}
+		logrus.Infof("Parsing %s\n", currentPackage)
 
-		packageYaml, err := parsePackageYaml(packageYamlPath)
+		upstreamYaml, err := parseUpstreamYaml(upstreamYamlPath)
 		if err != nil {
 			logrus.Debug(err)
 			continue
 		}
 
-		helmChart, err := loadAndOverlayChart(packagePath, packageYaml)
+		helmChart, err := loadAndOverlayChart(currentPackage, upstreamYaml)
 		if err != nil {
 			logrus.Debug(err)
+			skipped = append(skipped, currentPackage)
 			continue
 		}
 
@@ -370,8 +386,8 @@ func fetchPackages(packageList []string) {
 			continue
 		}
 
-		sourcePath := packagePath + helmChart.Metadata.Name
-		targetPath := packagePath + "charts"
+		sourcePath := packagePath + "/" + helmChart.Metadata.Name
+		targetPath := packagePath + "/" + repositoryChartsDir
 		if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
 			os.RemoveAll(targetPath)
 		}
@@ -380,17 +396,26 @@ func fetchPackages(packageList []string) {
 			logrus.Debug(err)
 		}
 	}
+	if len(skipped) > 0 {
+		logrus.Errorf("Skipped due to error: %v", skipped)
+	}
+}
 
+func createPackageYaml(packagePath string, chartSourceMeta ChartSourceMetadata) {
+	filePath := packagePath + "/" + packageOptionsFile
+	packageYaml, err := yaml.Marshal(&chartSourceMeta.PackageYaml)
+	if err != nil {
+		logrus.Debug(err)
+	}
+
+	err = ioutil.WriteFile(filePath, packageYaml, 0644)
+	if err != nil {
+		logrus.Debug(err)
+	}
 }
 
 func main() {
-	workingDir, err := os.Getwd()
-	if err != nil {
-		logrus.Debug(err)
-		os.Exit(1)
-	}
-
-	packageList, err := charts.ListPackages(workingDir, "")
+	packageList, err := charts.ListPackages(getRepoRoot(), "")
 	if err != nil {
 		logrus.Debug(err)
 	}
