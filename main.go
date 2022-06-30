@@ -296,7 +296,12 @@ func loadAndOverlayChart(packageName string, upstreamYaml UpstreamYaml) (*chart.
 		return nil, err
 	}
 	createPackageYaml(packagePath, chartSourceMeta)
-	packages, _ := charts.GetPackages(getRepoRoot(), packageName)
+	packages, err := charts.GetPackages(getRepoRoot(), packageName)
+	if err != nil {
+		logrus.Warnln(err)
+	}
+
+	logrus.Warnln(packages)
 	err = packages[0].Prepare()
 	if err != nil {
 		logrus.Errorln("Chart prepare failed. Cleaning up and skipping...")
@@ -320,19 +325,6 @@ func loadAndOverlayChart(packageName string, upstreamYaml UpstreamYaml) (*chart.
 
 	helmChart.Metadata = overlayChartMetadata(*helmChart.Metadata, upstreamYaml.ChartYaml)
 
-	err = packages[0].GeneratePatch()
-	if err != nil {
-		logrus.Debug(err)
-	}
-	/*
-		err = packages[0].Clean()
-		if err != nil {
-			logrus.Debug(err)
-		}
-	*/
-
-	err = packages[0].GenerateCharts(true)
-
 	if helmChart.Metadata.Annotations == nil {
 		helmChart.Metadata.Annotations = make(map[string]string)
 	}
@@ -354,6 +346,31 @@ func loadAndOverlayChart(packageName string, upstreamYaml UpstreamYaml) (*chart.
 		helmChart.Metadata.Annotations["catalog.cattle.io/release-name"] = chartSourceMeta.Name
 	}
 
+	packages[0].Clean()
+	err = chartutil.SaveDir(helmChart, packagePath)
+	if err != nil {
+		logrus.Debug(err)
+	}
+
+	sourcePath := packagePath + "/" + helmChart.Metadata.Name
+	targetPath := chartSourceMeta.FileName
+	err = os.Rename(sourcePath, targetPath)
+	if err != nil {
+		logrus.Debug(err)
+	}
+
+	err = packages[0].GeneratePatch()
+	if err != nil {
+		logrus.Infoln(err)
+	}
+
+	err = packages[0].Clean()
+	if err != nil {
+		logrus.Debug(err)
+	}
+
+	err = packages[0].GenerateCharts(true)
+
 	return helmChart, err
 }
 
@@ -373,28 +390,13 @@ func fetchPackages(packageList []string) {
 			continue
 		}
 
-		helmChart, err := loadAndOverlayChart(currentPackage, upstreamYaml)
+		_, err = loadAndOverlayChart(currentPackage, upstreamYaml)
 		if err != nil {
 			logrus.Debug(err)
 			skipped = append(skipped, currentPackage)
 			continue
 		}
 
-		err = chartutil.SaveDir(helmChart, packagePath)
-		if err != nil {
-			logrus.Debug(err)
-			continue
-		}
-
-		sourcePath := packagePath + "/" + helmChart.Metadata.Name
-		targetPath := packagePath + "/" + repositoryChartsDir
-		if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
-			os.RemoveAll(targetPath)
-		}
-		err = os.Rename(sourcePath, targetPath)
-		if err != nil {
-			logrus.Debug(err)
-		}
 	}
 	if len(skipped) > 0 {
 		logrus.Errorf("Skipped due to error: %v", skipped)
