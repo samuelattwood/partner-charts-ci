@@ -1,15 +1,19 @@
 package fetcher
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/google/go-github/v45/github"
 	"github.com/samuelattwood/partner-charts-ci/pkg/options"
 	"github.com/sirupsen/logrus"
 
@@ -78,8 +82,6 @@ func fetchUpstreamHelmrepo(upstreamYaml *options.UpstreamYaml) (options.ChartSou
 		chartUrl = upstreamYaml.HelmRepoUrl + "/" + latestEntry.URLs[0]
 	}
 
-	fmt.Println(latestEntry)
-
 	chartSourceMeta.Name = latestEntry.Metadata.Name
 	chartSourceMeta.DisplayName = latestEntry.Metadata.Name
 	chartSourceMeta.Url = chartUrl
@@ -141,16 +143,56 @@ func fetchUpstreamArtifacthub(upstreamYaml *options.UpstreamYaml) (options.Chart
 	return chartSourceMeta, nil
 }
 
+func getGitHubUserAndRepo(gitUrl string) (string, string, error) {
+	if !strings.HasPrefix(gitUrl, "https://github.com") {
+		err := fmt.Errorf("%s is not a GitHub URL", gitUrl)
+		return "", "", err
+	}
+
+	baseUrl := strings.TrimPrefix(gitUrl, "https://")
+	baseUrl = strings.TrimSuffix(baseUrl, ".git")
+	split := strings.Split(baseUrl, "/")
+
+	return split[1], split[2], nil
+
+}
+
+func fetchGitHubRelease(upstreamYaml *options.UpstreamYaml) (string, error) {
+	var releaseCommit string
+	client := github.NewClient(nil)
+	gitHubUser, gitHubRepo, err := getGitHubUserAndRepo(upstreamYaml.GitRepoUrl)
+	if err != nil {
+		logrus.Error(err)
+	}
+	ctx := context.Background()
+	opt := &github.ListOptions{}
+	releases, _, _ := client.Repositories.ListReleases(ctx, gitHubUser, gitHubRepo, opt)
+
+	for _, rel := range releases {
+		if !*rel.Prerelease {
+			releaseCommit = *rel.TargetCommitish
+			break
+		}
+	}
+
+	return releaseCommit, nil
+}
+
 //Constructs Chart Metadata for latest version published to Git Repository
 func fetchUpstreamGit(upstreamYaml *options.UpstreamYaml) (options.ChartSourceMetadata, error) {
-	cloneOptions := git.CloneOptions{}
-	cloneOptions.URL = upstreamYaml.GitRepoUrl
-	cloneOptions.Depth = 1
+	var upstreamCommit string
+	cloneOptions := git.CloneOptions{
+		URL: upstreamYaml.GitRepoUrl,
+	}
+
 	if upstreamYaml.GitBranch != "" {
 		cloneOptions.RemoteName = upstreamYaml.GitBranch
 	}
+	if !upstreamYaml.GitHubRelease {
+		cloneOptions.Depth = 1
+	}
 
-	tempDir, err := os.MkdirTemp("", "chartDir")
+	tempDir, err := os.MkdirTemp("", "gitRepo")
 	if err != nil {
 		return options.ChartSourceMetadata{}, err
 	}
@@ -160,14 +202,36 @@ func fetchUpstreamGit(upstreamYaml *options.UpstreamYaml) (options.ChartSourceMe
 		return options.ChartSourceMetadata{}, err
 	}
 
-	ref, err := r.Head()
-	if err != nil {
-		logrus.Debug(err)
+	if upstreamYaml.GitHubRelease {
+		upstreamCommit, err = fetchGitHubRelease(upstreamYaml)
+		if err != nil {
+			logrus.Debug(err)
+		}
+
+		wt, err := r.Worktree()
+		if err != nil {
+			logrus.Error(err)
+
+		}
+
+		err = wt.Checkout(&git.CheckoutOptions{
+			Hash: plumbing.NewHash(upstreamCommit),
+		})
+		if err != nil {
+			logrus.Error(err)
+		}
+	} else {
+		ref, err := r.Head()
+		if err != nil {
+			logrus.Debug(err)
+		}
+
+		upstreamCommit = ref.Hash().String()
 	}
 
 	sourcePath := tempDir
 	if upstreamYaml.GitSubDirectory != "" {
-		sourcePath = sourcePath + "/" + upstreamYaml.GitSubDirectory
+		sourcePath = filepath.Join(sourcePath, upstreamYaml.GitSubDirectory)
 	}
 	helmChart, err := loader.Load(sourcePath)
 	if err != nil {
@@ -182,7 +246,7 @@ func fetchUpstreamGit(upstreamYaml *options.UpstreamYaml) (options.ChartSourceMe
 		Source:      "Git",
 		PackageYaml: options.PackageYaml{
 			Url:          upstreamYaml.GitRepoUrl,
-			Commit:       ref.Hash().String(),
+			Commit:       upstreamCommit,
 			SubDirectory: upstreamYaml.GitSubDirectory,
 		},
 	}
@@ -199,7 +263,6 @@ func fetchUpstreamGit(upstreamYaml *options.UpstreamYaml) (options.ChartSourceMe
 	}
 
 	return chartSourceMeta, nil
-
 }
 
 func FetchUpstream(upstreamYaml *options.UpstreamYaml) (options.ChartSourceMetadata, error) {

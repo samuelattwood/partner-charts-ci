@@ -36,6 +36,7 @@ type UpstreamYaml struct {
 	ChartYaml       chart.Metadata `json:"Chart.yaml"`
 	DisplayName     string         `json:"DisplayName"`
 	GitBranch       string         `json:"GitBranch"`
+	GitHubRelease   bool           `json:"GitHubRelease`
 	GitRepoUrl      string         `json:"GitRepo"`
 	GitSubDirectory string         `json:"GitSubdirectory"`
 	HelmChart       string         `json:"HelmChart"`

@@ -210,7 +210,7 @@ func fetchPackages(packageList []string) {
 }
 
 func main() {
-	logrus.SetLevel(logrus.DebugLevel)
+	//logrus.SetLevel(logrus.DebugLevel)
 	currentPackage := os.Getenv(packageEnvVariable)
 	packageDirectory := filepath.Join(getRepoRoot(), options.RepositoryPackagesDir)
 	packageList, err := parse.ListPackages(packageDirectory, currentPackage)
