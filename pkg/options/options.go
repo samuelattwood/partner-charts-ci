@@ -7,6 +7,7 @@ import (
 const (
 	PackageOptionsFile    = "package.yaml"
 	UpstreamOptionsFile   = "upstream.yaml"
+	IndexFile             = "index.yaml"
 	RepositoryAssetsDir   = "assets"
 	RepositoryChartsDir   = "charts"
 	RepositoryPackagesDir = "packages"

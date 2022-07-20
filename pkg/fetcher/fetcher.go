@@ -91,7 +91,7 @@ func fetchUpstreamHelmrepo(upstreamYaml *options.UpstreamYaml) (options.ChartSou
 	}
 
 	if upstreamYaml.Vendor != "" {
-		chartSourceMeta.Vendor = strings.ToLower(upstreamYaml.Vendor)
+		chartSourceMeta.Vendor = upstreamYaml.Vendor
 	} else {
 		chartSourceMeta.Vendor = chartSourceMeta.Name
 	}
@@ -125,7 +125,7 @@ func fetchUpstreamArtifacthub(upstreamYaml *options.UpstreamYaml) (options.Chart
 	}
 
 	if upstreamYaml.Vendor != "" {
-		chartSourceMeta.Vendor = strings.ToLower(upstreamYaml.Vendor)
+		chartSourceMeta.Vendor = upstreamYaml.Vendor
 	} else if apiResp.Repository.OrgName != "" {
 		chartSourceMeta.Vendor = apiResp.Repository.OrgName
 	} else {
