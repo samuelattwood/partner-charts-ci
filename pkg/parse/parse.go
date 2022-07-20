@@ -34,8 +34,8 @@ func ListPackages(packageDirectory string, currentPackage string) ([]string, err
 		searchDirectory = packageDirectory
 	}
 
-	if _, err := os.Stat(packageDirectory); os.IsNotExist(err) {
-		logrus.Error(err)
+	if _, err := os.Stat(searchDirectory); os.IsNotExist(err) {
+		return packageList, err
 	}
 
 	findPackage := func(path string, info os.FileInfo, err error) error {
@@ -53,7 +53,6 @@ func ListPackages(packageDirectory string, currentPackage string) ([]string, err
 	}
 
 	return packageList, filepath.Walk(searchDirectory, findPackage)
-
 }
 
 func ParseUpstreamYaml(filePath string) (options.UpstreamYaml, error) {

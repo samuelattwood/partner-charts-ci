@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/rancher/charts-build-scripts/pkg/charts"
 	"github.com/samuelattwood/partner-charts-ci/pkg/export"
 	"github.com/samuelattwood/partner-charts-ci/pkg/fetcher"
@@ -31,6 +34,34 @@ func getRepoRoot() string {
 	}
 
 	return repoRoot
+}
+
+func commitChanges() error {
+	commitOptions := git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "partner-charts-ci",
+			Email: "partner-charts-ci@suse.com",
+			When:  time.Now(),
+		},
+	}
+
+	r, err := git.PlainOpen(getRepoRoot())
+	if err != nil {
+		return err
+	}
+
+	wt, err := r.Worktree()
+	if err != nil {
+		return err
+	}
+
+	wt.Add(options.IndexFile)
+	wt.Add(options.RepositoryPackagesDir)
+	wt.Add(options.RepositoryChartsDir)
+
+	wt.Commit("Automated Update", &commitOptions)
+
+	return nil
 }
 
 func applyChartAnnotations(chartMetadata *chart.Metadata, chartSourceMetadata *options.ChartSourceMetadata) {
@@ -259,6 +290,13 @@ func writeChart(helmChart *chart.Chart, chartSourceMetadata *options.ChartSource
 
 func writeIndex() error {
 	indexFilePath := filepath.Join(getRepoRoot(), options.IndexFile)
+	if _, err := os.Stat(indexFilePath); os.IsNotExist(err) {
+		err = repo.NewIndexFile().WriteFile(indexFilePath, 0644)
+		if err != nil {
+			return err
+		}
+	}
+
 	helmIndexYaml, err := repo.LoadIndexFile(indexFilePath)
 	if err != nil {
 		return err
@@ -275,6 +313,22 @@ func writeIndex() error {
 	}
 
 	return nil
+}
+
+func fetchUpstreams(upstreams map[string]options.UpstreamYaml) {
+	skipped := make([]string, 0)
+	for currentPackage, currentUpstream := range upstreams {
+		_, err := loadAndOverlayChart(currentPackage, &currentUpstream)
+		if err != nil {
+			logrus.Error(err)
+			skipped = append(skipped, currentPackage)
+			continue
+		}
+	}
+
+	if len(skipped) > 0 {
+		logrus.Errorf("Skipped due to error: %v", skipped)
+	}
 }
 
 func loadUpstreams(packageList []string) map[string]options.UpstreamYaml {
@@ -297,28 +351,12 @@ func loadUpstreams(packageList []string) map[string]options.UpstreamYaml {
 	return upstreams
 }
 
-func fetchUpstreams(upstreams map[string]options.UpstreamYaml) {
-	skipped := make([]string, 0)
-	for currentPackage, currentUpstream := range upstreams {
-		_, err := loadAndOverlayChart(currentPackage, &currentUpstream)
-		if err != nil {
-			logrus.Error(err)
-			skipped = append(skipped, currentPackage)
-			continue
-		}
-	}
-
-	if len(skipped) > 0 {
-		logrus.Errorf("Skipped due to error: %v", skipped)
-	}
-}
-
 func generatePackageList() []string {
 	currentPackage := os.Getenv(packageEnvVariable)
 	packageDirectory := filepath.Join(getRepoRoot(), options.RepositoryPackagesDir)
 	packageList, err := parse.ListPackages(packageDirectory, currentPackage)
 	if err != nil {
-		logrus.Debug(err)
+		logrus.Error(err)
 	}
 
 	return packageList
@@ -362,6 +400,7 @@ func runGambit(c *cli.Context) {
 	packageList := generatePackageList()
 	upstreams := loadUpstreams(packageList)
 	fetchUpstreams(upstreams)
+	commitChanges()
 }
 
 func main() {
