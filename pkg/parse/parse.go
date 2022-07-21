@@ -3,6 +3,7 @@ package parse
 import (
 	"io/ioutil"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/samuelattwood/partner-charts-ci/pkg/options"
@@ -11,9 +12,9 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func CreatePackageYaml(packagePath string, chartSourceMeta *options.ChartSourceMetadata) {
-	filePath := packagePath + "/" + options.PackageOptionsFile
-	packageYaml, err := yaml.Marshal(&chartSourceMeta.PackageYaml)
+func CreatePackageYaml(packageWrapper *options.PackageWrapper) {
+	filePath := path.Join(packageWrapper.Path, options.PackageOptionsFile)
+	packageYaml, err := yaml.Marshal(packageWrapper.SourceMetadata.PackageYaml)
 	if err != nil {
 		logrus.Debug(err)
 	}
@@ -24,8 +25,8 @@ func CreatePackageYaml(packagePath string, chartSourceMeta *options.ChartSourceM
 	}
 }
 
-func ListPackages(packageDirectory string, currentPackage string) ([]string, error) {
-	var packageList []string
+func ListPackages(packageDirectory string, currentPackage string) ([]*options.PackageWrapper, error) {
+	var packageList []*options.PackageWrapper
 	var searchDirectory string
 
 	if currentPackage != "" {
@@ -46,7 +47,7 @@ func ListPackages(packageDirectory string, currentPackage string) ([]string, err
 		if !info.IsDir() && info.Name() == options.UpstreamOptionsFile {
 			packagePath := filepath.Dir(path)
 			packageName := filepath.Base(packagePath)
-			packageList = append(packageList, packageName)
+			packageList = append(packageList, &options.PackageWrapper{Name: packageName, Path: packagePath})
 		}
 
 		return nil

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/rancher/charts-build-scripts/pkg/charts"
+	"github.com/rancher/charts-build-scripts/pkg/filesystem"
 	"github.com/samuelattwood/partner-charts-ci/pkg/export"
 	"github.com/samuelattwood/partner-charts-ci/pkg/fetcher"
 	"github.com/samuelattwood/partner-charts-ci/pkg/options"
@@ -24,13 +26,15 @@ import (
 )
 
 const (
+	commitAuthorName   = "partner-charts-ci"
+	commitAuthorEmail  = "partner-charts-ci@suse.com"
 	packageEnvVariable = "PACKAGE"
 )
 
 func getRepoRoot() string {
 	repoRoot, err := os.Getwd()
 	if err != nil {
-		logrus.Debug(err)
+		logrus.Fatal(err)
 	}
 
 	return repoRoot
@@ -39,8 +43,8 @@ func getRepoRoot() string {
 func commitChanges() error {
 	commitOptions := git.CommitOptions{
 		Author: &object.Signature{
-			Name:  "partner-charts-ci",
-			Email: "partner-charts-ci@suse.com",
+			Name:  commitAuthorName,
+			Email: commitAuthorEmail,
 			When:  time.Now(),
 		},
 	}
@@ -56,8 +60,9 @@ func commitChanges() error {
 	}
 
 	wt.Add(options.IndexFile)
-	wt.Add(options.RepositoryPackagesDir)
+	wt.Add(options.RepositoryAssetsDir)
 	wt.Add(options.RepositoryChartsDir)
+	wt.Add(options.RepositoryPackagesDir)
 
 	wt.Commit("Automated Update", &commitOptions)
 
@@ -135,100 +140,110 @@ func overlayChartMetadata(chartMetadata *chart.Metadata, overlay chart.Metadata)
 
 }
 
-func cleanPackage(packageName string, chartSourceMetadata *options.ChartSourceMetadata) (*charts.Package, error) {
-	currentPackage, err := generatePackageFromMetadata(packageName, chartSourceMetadata)
+func cleanPackage(packageWrapper *options.PackageWrapper) error {
+	err := generatePackageFromMetadata(packageWrapper)
 	if err != nil {
-		err = fmt.Errorf("unable to generate package from metadata")
-		return nil, err
+		err = fmt.Errorf("unable to generate package from metadata for clean")
+		return err
 	}
-
+	currentPackage := packageWrapper.Package
 	err = currentPackage.Clean()
 	if err != nil {
 		err = fmt.Errorf("unable to clean up package")
-		return currentPackage, err
+		return err
 	}
 
-	return currentPackage, nil
+	return nil
 }
 
-func patchPackage(packageName string, chartSourceMetadata *options.ChartSourceMetadata) (*charts.Package, error) {
-	currentPackage, err := generatePackageFromMetadata(packageName, chartSourceMetadata)
+func patchPackage(packageWrapper *options.PackageWrapper) error {
+	err := generatePackageFromMetadata(packageWrapper)
 	if err != nil {
-		err = fmt.Errorf("unable to generate package from metadata")
-		return nil, err
+		err = fmt.Errorf("unable to generate package from metadata for patch")
+		return err
 	}
+	currentPackage := packageWrapper.Package
 
 	err = currentPackage.GeneratePatch()
 	if err != nil {
 		err = fmt.Errorf("unable to generate patch files")
-		return currentPackage, err
+		return err
 	}
 
-	return currentPackage, nil
+	return nil
 }
 
-func preparePackage(packageName string, chartSourceMetadata *options.ChartSourceMetadata) (*charts.Package, error) {
-	currentPackage, err := generatePackageFromMetadata(packageName, chartSourceMetadata)
+func preparePackage(packageWrapper *options.PackageWrapper) error {
+	err := generatePackageFromMetadata(packageWrapper)
 	if err != nil {
-		err = fmt.Errorf("unable to generate package from metadata")
-		return nil, err
+		err = fmt.Errorf("unable to generate package from metadata for prepare")
+		return err
 	}
+	currentPackage := packageWrapper.Package
 
 	err = currentPackage.Prepare()
 	if err != nil {
 		err = fmt.Errorf("unable to prepare package. cleaning up and skipping")
 		currentPackage.Clean()
-		return currentPackage, err
+		return err
 	}
 
-	if _, err := os.Stat(chartSourceMetadata.FileName + "/Chart.yaml.orig"); !os.IsNotExist(err) {
-		os.Remove(chartSourceMetadata.FileName + "/Chart.yaml.orig")
+	patchOrigPath := path.Join(packageWrapper.SourceMetadata.FileName, "Chart.yaml.orig")
+	if _, err := os.Stat(patchOrigPath); !os.IsNotExist(err) {
+		os.Remove(patchOrigPath)
 	}
 
-	return currentPackage, nil
+	return nil
 }
 
-func generatePackageFromMetadata(packageName string, chartSourceMetadata *options.ChartSourceMetadata) (*charts.Package, error) {
-	packagePath := filepath.Join(getRepoRoot(), options.RepositoryPackagesDir, packageName)
-
-	parse.CreatePackageYaml(packagePath, chartSourceMetadata)
-	packages, err := charts.GetPackages(getRepoRoot(), packageName)
+func generatePackageFromMetadata(packageWrapper *options.PackageWrapper) error {
+	parse.CreatePackageYaml(packageWrapper)
+	packagesPath := filepath.Join(getRepoRoot(), options.RepositoryPackagesDir)
+	packageRelativePath := strings.TrimPrefix(packageWrapper.Path, packagesPath)
+	rootFs := filesystem.GetFilesystem(getRepoRoot())
+	currentPackage, err := charts.GetPackage(rootFs, packageRelativePath)
 	if err != nil {
-		logrus.Debugln(err)
+		return err
 	}
 
-	return packages[0], nil
+	packageWrapper.Package = currentPackage
+
+	return nil
 }
 
-func generateChartSourceMetadata(packageName string, upstreamYaml *options.UpstreamYaml) (*options.ChartSourceMetadata, error) {
-	packagePath := filepath.Join(getRepoRoot(), options.RepositoryPackagesDir, packageName)
-	chartSourceMeta, err := fetcher.FetchUpstream(upstreamYaml)
+func generateChartSourceMetadata(packageWrapper *options.PackageWrapper) error {
+	err := fetcher.FetchUpstream(packageWrapper)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	chartSourceMeta.FileName = filepath.Join(packagePath, options.RepositoryChartsDir)
+	packageWrapper.SourceMetadata.FileName = filepath.Join(packageWrapper.Path, options.RepositoryChartsDir)
 
 	logrus.Infof("\n  Source: %s\n  Vendor: %s\n  Chart: %s\n  Version: %s\n  URL: %s  \n",
-		chartSourceMeta.Source, chartSourceMeta.Vendor, chartSourceMeta.Name, chartSourceMeta.Version, chartSourceMeta.Url)
+		packageWrapper.SourceMetadata.Source, packageWrapper.SourceMetadata.Vendor, packageWrapper.SourceMetadata.Name,
+		packageWrapper.SourceMetadata.Version, packageWrapper.SourceMetadata.Url)
 
-	return &chartSourceMeta, nil
+	return nil
 }
 
-func loadAndOverlayChart(packageName string, upstreamYaml *options.UpstreamYaml) (*chart.Chart, error) {
-	chartSourceMeta, err := generateChartSourceMetadata(packageName, upstreamYaml)
+func loadAndOverlayChart(packageWrapper *options.PackageWrapper) (*chart.Chart, error) {
+	err := generateChartSourceMetadata(packageWrapper)
 	if err != nil {
 		return nil, err
 	}
-	currentPackage, err := preparePackage(packageName, chartSourceMeta)
+	err = preparePackage(packageWrapper)
 	if err != nil {
 		return nil, err
 	}
+
+	currentPackage := packageWrapper.Package
+	chartSourceMeta := packageWrapper.SourceMetadata
+	upstreamYaml := packageWrapper.UpstreamYaml
 
 	export.StandardizeChartDirectory(chartSourceMeta.FileName, "")
 
 	helmChart, err := loader.Load(chartSourceMeta.FileName)
 	if err != nil {
-		logrus.Debug(err)
+		return nil, err
 	}
 
 	overlayChartMetadata(helmChart.Metadata, upstreamYaml.ChartYaml)
@@ -246,7 +261,7 @@ func loadAndOverlayChart(packageName string, upstreamYaml *options.UpstreamYaml)
 
 	err = currentPackage.GeneratePatch()
 	if err != nil {
-		logrus.Debug(err)
+		return nil, err
 	}
 
 	err = currentPackage.Clean()
@@ -256,12 +271,12 @@ func loadAndOverlayChart(packageName string, upstreamYaml *options.UpstreamYaml)
 
 	err = writeChart(helmChart, chartSourceMeta)
 	if err != nil {
-		logrus.Debug(err)
+		return nil, err
 	}
 
 	err = writeIndex()
 	if err != nil {
-		logrus.Debug(err)
+		return nil, err
 	}
 
 	return helmChart, err
@@ -274,11 +289,6 @@ func writeChart(helmChart *chart.Chart, chartSourceMetadata *options.ChartSource
 	_, err := chartutil.Save(helmChart, assetsPath)
 	if err != nil {
 		error := fmt.Errorf("unable to save chart to %s", assetsPath)
-		return error
-	}
-	err = chartutil.SaveDir(helmChart, chartsPath)
-	if err != nil {
-		error := fmt.Errorf("unable to save chart to %s", chartsPath)
 		return error
 	}
 
@@ -315,13 +325,13 @@ func writeIndex() error {
 	return nil
 }
 
-func fetchUpstreams(upstreams map[string]options.UpstreamYaml) {
+func fetchUpstreams(packageWrapperList []*options.PackageWrapper) {
 	skipped := make([]string, 0)
-	for currentPackage, currentUpstream := range upstreams {
-		_, err := loadAndOverlayChart(currentPackage, &currentUpstream)
+	for _, currentPackage := range packageWrapperList {
+		_, err := loadAndOverlayChart(currentPackage)
 		if err != nil {
 			logrus.Error(err)
-			skipped = append(skipped, currentPackage)
+			skipped = append(skipped, currentPackage.Name)
 			continue
 		}
 	}
@@ -331,27 +341,24 @@ func fetchUpstreams(upstreams map[string]options.UpstreamYaml) {
 	}
 }
 
-func loadUpstreams(packageList []string) map[string]options.UpstreamYaml {
-	upstreams := make(map[string]options.UpstreamYaml)
+func parseUpstreams(packageList []*options.PackageWrapper) {
 	for _, currentPackage := range packageList {
-		packagePath := filepath.Join(options.RepositoryPackagesDir, currentPackage)
-		upstreamYamlPath := filepath.Join(packagePath, options.UpstreamOptionsFile)
+		upstreamYamlPath := filepath.Join(currentPackage.Path, options.UpstreamOptionsFile)
 		if _, err := os.Stat(upstreamYamlPath); os.IsNotExist(err) {
 			continue
 		}
-		logrus.Infof("Parsing %s\n", currentPackage)
+		logrus.Infof("Parsing %s\n", currentPackage.Name)
 
 		upstreamYaml, err := parse.ParseUpstreamYaml(upstreamYamlPath)
 		if err != nil {
 			logrus.Error(err)
 			continue
 		}
-		upstreams[currentPackage] = upstreamYaml
+		currentPackage.UpstreamYaml = &upstreamYaml
 	}
-	return upstreams
 }
 
-func generatePackageList() []string {
+func generatePackageList() []*options.PackageWrapper {
 	currentPackage := os.Getenv(packageEnvVariable)
 	packageDirectory := filepath.Join(getRepoRoot(), options.RepositoryPackagesDir)
 	packageList, err := parse.ListPackages(packageDirectory, currentPackage)
@@ -364,43 +371,62 @@ func generatePackageList() []string {
 
 func listPackages(c *cli.Context) {
 	packageList := generatePackageList()
-	for _, pkg := range packageList {
-		fmt.Println(pkg)
+	for _, currentPackage := range packageList {
+		fmt.Println(currentPackage.Name)
 	}
 }
 
 func patchCharts(c *cli.Context) {
 	packageList := generatePackageList()
-	upstreams := loadUpstreams(packageList)
-	for currentPackage, currentUpstream := range upstreams {
-		chartSourceMeta, _ := generateChartSourceMetadata(currentPackage, &currentUpstream)
-		patchPackage(currentPackage, chartSourceMeta)
+	parseUpstreams(packageList)
+	for _, currentPackage := range packageList {
+		err := generateChartSourceMetadata(currentPackage)
+		if err != nil {
+			logrus.Error(err)
+			continue
+		}
+		patchPackage(currentPackage)
 	}
 }
 
 func cleanCharts(c *cli.Context) {
 	packageList := generatePackageList()
-	upstreams := loadUpstreams(packageList)
-	for currentPackage, currentUpstream := range upstreams {
-		chartSourceMeta, _ := generateChartSourceMetadata(currentPackage, &currentUpstream)
-		cleanPackage(currentPackage, chartSourceMeta)
+	parseUpstreams(packageList)
+	for _, currentPackage := range packageList {
+		err := generateChartSourceMetadata(currentPackage)
+		if err != nil {
+			logrus.Error(err)
+			continue
+		}
+		cleanPackage(currentPackage)
 	}
+}
+
+func commitCharts(c *cli.Context) {
+	commitChanges()
 }
 
 func prepareCharts(c *cli.Context) {
 	packageList := generatePackageList()
-	upstreams := loadUpstreams(packageList)
-	for currentPackage, currentUpstream := range upstreams {
-		chartSourceMeta, _ := generateChartSourceMetadata(currentPackage, &currentUpstream)
-		preparePackage(currentPackage, chartSourceMeta)
+	parseUpstreams(packageList)
+	for _, currentPackage := range packageList {
+		fmt.Println(currentPackage.Name)
+		err := generateChartSourceMetadata(currentPackage)
+		if err != nil {
+			logrus.Error(err)
+			continue
+		}
+		err = preparePackage(currentPackage)
+		if err != nil {
+			logrus.Error(err)
+		}
 	}
 }
 
 func runGambit(c *cli.Context) {
 	packageList := generatePackageList()
-	upstreams := loadUpstreams(packageList)
-	fetchUpstreams(upstreams)
-	commitChanges()
+	parseUpstreams(packageList)
+	fetchUpstreams(packageList)
 }
 
 func main() {
@@ -432,6 +458,11 @@ func main() {
 			Name:   "clean",
 			Usage:  "Clean up ephemeral chart directory",
 			Action: cleanCharts,
+		},
+		{
+			Name:   "commit",
+			Usage:  "Stage and commit changes",
+			Action: commitCharts,
 		},
 		{
 			Name:   "run",

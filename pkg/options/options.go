@@ -1,6 +1,8 @@
 package options
 
 import (
+	"github.com/rancher/charts-build-scripts/pkg/charts"
+
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -24,6 +26,13 @@ type ChartSourceMetadata struct {
 	Version     string
 }
 
+type PackageWrapper struct {
+	Name           string
+	Path           string
+	Package        *charts.Package
+	SourceMetadata *ChartSourceMetadata
+	UpstreamYaml   *UpstreamYaml
+}
 type PackageYaml struct {
 	Commit         string `json:"commit,omitempty"`
 	PackageVersion string `json:"packageVersion,omitempty"`
@@ -37,7 +46,7 @@ type UpstreamYaml struct {
 	ChartYaml       chart.Metadata `json:"Chart.yaml"`
 	DisplayName     string         `json:"DisplayName"`
 	GitBranch       string         `json:"GitBranch"`
-	GitHubRelease   bool           `json:"GitHubRelease`
+	GitHubRelease   bool           `json:"GitHubRelease"`
 	GitRepoUrl      string         `json:"GitRepo"`
 	GitSubDirectory string         `json:"GitSubdirectory"`
 	HelmChart       string         `json:"HelmChart"`
