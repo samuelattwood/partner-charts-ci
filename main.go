@@ -40,7 +40,8 @@ func getRepoRoot() string {
 	return repoRoot
 }
 
-func commitChanges() error {
+func commitChanges(updatedList []*options.PackageWrapper) error {
+	var additions, updates string
 	commitOptions := git.CommitOptions{
 		Author: &object.Signature{
 			Name:  commitAuthorName,
@@ -64,7 +65,25 @@ func commitChanges() error {
 	wt.Add(options.RepositoryChartsDir)
 	wt.Add(options.RepositoryPackagesDir)
 
-	wt.Commit("Automated Update", &commitOptions)
+	commitMessage := "CI Updated Charts"
+	for _, pkg := range updatedList {
+		lineItem := fmt.Sprintf("  - %s/%s (%s)\n",
+			strings.ToLower(pkg.SourceMetadata.Vendor), pkg.Name, pkg.SourceMetadata.Version)
+		if pkg.LatestStored == "" {
+			additions += lineItem
+		} else {
+			updates += lineItem
+		}
+	}
+
+	if additions != "" {
+		commitMessage += fmt.Sprintf("\nAdded:\n%s", additions)
+	}
+	if updates != "" {
+		commitMessage += fmt.Sprintf("\nUpdated:\n%s", updates)
+	}
+
+	wt.Commit(commitMessage, &commitOptions)
 
 	return nil
 }
@@ -218,6 +237,7 @@ func generateChartSourceMetadata(packageWrapper *options.PackageWrapper) error {
 	}
 	packageWrapper.SourceMetadata.FileName = filepath.Join(packageWrapper.Path, options.RepositoryChartsDir)
 
+	logrus.Infof("Parsing %s\n", packageWrapper.Name)
 	logrus.Infof("\n  Source: %s\n  Vendor: %s\n  Chart: %s\n  Version: %s\n  URL: %s  \n",
 		packageWrapper.SourceMetadata.Source, packageWrapper.SourceMetadata.Vendor, packageWrapper.SourceMetadata.Name,
 		packageWrapper.SourceMetadata.Version, packageWrapper.SourceMetadata.Url)
@@ -225,61 +245,71 @@ func generateChartSourceMetadata(packageWrapper *options.PackageWrapper) error {
 	return nil
 }
 
-func loadAndOverlayChart(packageWrapper *options.PackageWrapper) (*chart.Chart, error) {
+func loadAndOverlayChart(packageWrapper *options.PackageWrapper) (bool, error) {
+	updated := false
 	err := generateChartSourceMetadata(packageWrapper)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
+
+	latestStored, err := getLatestStoredVersion(packageWrapper.SourceMetadata.Name)
+	packageWrapper.LatestStored = latestStored
+	if err != nil {
+		return false, err
+	}
+	if latestStored == packageWrapper.SourceMetadata.Version {
+		logrus.Infof("%s/%s (%s) is up-to-date\n",
+			packageWrapper.SourceMetadata.Vendor, packageWrapper.SourceMetadata.Name, packageWrapper.SourceMetadata.Version)
+		return false, nil
+	}
+	updated = true
+
+	if packageWrapper.UpstreamYaml.DisplayName != "" {
+		packageWrapper.SourceMetadata.DisplayName = packageWrapper.UpstreamYaml.DisplayName
+	}
+	if packageWrapper.UpstreamYaml.ReleaseName != "" {
+		packageWrapper.SourceMetadata.Name = packageWrapper.UpstreamYaml.ReleaseName
+	}
+
 	err = preparePackage(packageWrapper)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
-	currentPackage := packageWrapper.Package
-	chartSourceMeta := packageWrapper.SourceMetadata
-	upstreamYaml := packageWrapper.UpstreamYaml
+	export.StandardizeChartDirectory(packageWrapper.SourceMetadata.FileName, "")
 
-	export.StandardizeChartDirectory(chartSourceMeta.FileName, "")
-
-	helmChart, err := loader.Load(chartSourceMeta.FileName)
+	helmChart, err := loader.Load(packageWrapper.SourceMetadata.FileName)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
-	overlayChartMetadata(helmChart.Metadata, upstreamYaml.ChartYaml)
+	overlayChartMetadata(helmChart.Metadata, packageWrapper.UpstreamYaml.ChartYaml)
 
-	if upstreamYaml.DisplayName != "" {
-		chartSourceMeta.DisplayName = upstreamYaml.DisplayName
-	}
-	if upstreamYaml.ReleaseName != "" {
-		chartSourceMeta.Name = upstreamYaml.ReleaseName
-	}
+	applyChartAnnotations(helmChart.Metadata, packageWrapper.SourceMetadata)
 
-	applyChartAnnotations(helmChart.Metadata, chartSourceMeta)
+	export.StandardizeChartDirectory(packageWrapper.SourceMetadata.FileName, "")
 
-	export.StandardizeChartDirectory(chartSourceMeta.FileName, "")
-
-	err = currentPackage.GeneratePatch()
+	err = packageWrapper.Package.GeneratePatch()
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
-	err = currentPackage.Clean()
+	err = packageWrapper.Package.Clean()
 	if err != nil {
 		logrus.Debug(err)
 	}
 
-	err = writeChart(helmChart, chartSourceMeta)
+	err = writeChart(helmChart, packageWrapper.SourceMetadata)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
 	err = writeIndex()
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
-	return helmChart, err
+	return updated, err
 }
 
 func writeChart(helmChart *chart.Chart, chartSourceMetadata *options.ChartSourceMetadata) error {
@@ -296,6 +326,25 @@ func writeChart(helmChart *chart.Chart, chartSourceMetadata *options.ChartSource
 	export.ExportChartDirectory(helmChart, chartsPath)
 
 	return nil
+}
+
+func getLatestStoredVersion(releaseName string) (string, error) {
+	helmIndexYaml, err := readIndex()
+	var latestVersion string
+	if err != nil {
+		return "", err
+	}
+	if val, ok := helmIndexYaml.Entries[releaseName]; ok {
+		latestVersion = val[0].Version
+	}
+
+	return latestVersion, nil
+}
+
+func readIndex() (*repo.IndexFile, error) {
+	indexFilePath := filepath.Join(getRepoRoot(), options.IndexFile)
+	helmIndexYaml, err := repo.LoadIndexFile(indexFilePath)
+	return helmIndexYaml, err
 }
 
 func writeIndex() error {
@@ -325,20 +374,25 @@ func writeIndex() error {
 	return nil
 }
 
-func fetchUpstreams(packageWrapperList []*options.PackageWrapper) {
-	skipped := make([]string, 0)
+func fetchUpstreams(packageWrapperList []*options.PackageWrapper) []*options.PackageWrapper {
+	skippedList := make([]string, 0)
+	updatedList := make([]*options.PackageWrapper, 0)
 	for _, currentPackage := range packageWrapperList {
-		_, err := loadAndOverlayChart(currentPackage)
+		updated, err := loadAndOverlayChart(currentPackage)
 		if err != nil {
 			logrus.Error(err)
-			skipped = append(skipped, currentPackage.Name)
+			skippedList = append(skippedList, currentPackage.Name)
 			continue
+		} else if updated {
+			updatedList = append(updatedList, currentPackage)
 		}
 	}
 
-	if len(skipped) > 0 {
-		logrus.Errorf("Skipped due to error: %v", skipped)
+	if len(skippedList) > 0 {
+		logrus.Errorf("Skipped due to error: %v", skippedList)
 	}
+
+	return updatedList
 }
 
 func parseUpstreams(packageList []*options.PackageWrapper) {
@@ -347,7 +401,6 @@ func parseUpstreams(packageList []*options.PackageWrapper) {
 		if _, err := os.Stat(upstreamYamlPath); os.IsNotExist(err) {
 			continue
 		}
-		logrus.Infof("Parsing %s\n", currentPackage.Name)
 
 		upstreamYaml, err := parse.ParseUpstreamYaml(upstreamYamlPath)
 		if err != nil {
@@ -403,7 +456,7 @@ func cleanCharts(c *cli.Context) {
 }
 
 func commitCharts(c *cli.Context) {
-	commitChanges()
+	commitChanges(make([]*options.PackageWrapper, 0))
 }
 
 func prepareCharts(c *cli.Context) {
@@ -426,7 +479,10 @@ func prepareCharts(c *cli.Context) {
 func runGambit(c *cli.Context) {
 	packageList := generatePackageList()
 	parseUpstreams(packageList)
-	fetchUpstreams(packageList)
+	updatedList := fetchUpstreams(packageList)
+	if len(updatedList) > 0 {
+		commitChanges(updatedList)
+	}
 }
 
 func main() {

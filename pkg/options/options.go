@@ -30,6 +30,7 @@ type PackageWrapper struct {
 	Name           string
 	Path           string
 	Package        *charts.Package
+	LatestStored   string
 	SourceMetadata *ChartSourceMetadata
 	UpstreamYaml   *UpstreamYaml
 }
