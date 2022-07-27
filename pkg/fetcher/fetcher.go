@@ -14,7 +14,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/google/go-github/v45/github"
-	"github.com/samuelattwood/partner-charts-ci/pkg/options"
+	"github.com/samuelattwood/partner-charts-ci/pkg/parse"
 	"github.com/sirupsen/logrus"
 
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -24,8 +24,7 @@ import (
 )
 
 const (
-	artifactHubApi        = "https://artifacthub.io/api/v1/packages/helm"
-	repositoryPackagesDir = "packages"
+	artifactHubApi = "https://artifacthub.io/api/v1/packages/helm"
 )
 
 type ArtifactHubApiHelmRepo struct {
@@ -44,13 +43,23 @@ type ArtifactHubApiHelm struct {
 	Version        string                 `json:"version"`
 }
 
+type ChartSourceMetadata struct {
+	Commit       string
+	DisplayName  string
+	Name         string
+	Source       string
+	SubDirectory string
+	Url          string
+	Vendor       string
+	Version      string
+}
+
 //Constructs Chart Metadata for latest version published to Helm Repository
-func fetchUpstreamHelmrepo(packageWrapper *options.PackageWrapper) error {
-	upstreamYaml := packageWrapper.UpstreamYaml
+func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	url := fmt.Sprintf("%s/index.yaml", upstreamYaml.HelmRepoUrl)
 
 	indexYaml := repo.NewIndexFile()
-	chartSourceMeta := options.ChartSourceMetadata{}
+	chartSourceMeta := ChartSourceMetadata{}
 
 	chartSourceMeta.Source = "HelmRepo"
 
@@ -69,7 +78,7 @@ func fetchUpstreamHelmrepo(packageWrapper *options.PackageWrapper) error {
 		logrus.Debug(err)
 	}
 	if _, ok := indexYaml.Entries[upstreamYaml.HelmChart]; !ok {
-		return fmt.Errorf("Helm chart: %s/%s not found", upstreamYaml.HelmRepoUrl, upstreamYaml.HelmChart)
+		return chartSourceMeta, fmt.Errorf("Helm chart: %s/%s not found", upstreamYaml.HelmRepoUrl, upstreamYaml.HelmChart)
 	}
 
 	indexYaml.SortEntries()
@@ -86,9 +95,6 @@ func fetchUpstreamHelmrepo(packageWrapper *options.PackageWrapper) error {
 	chartSourceMeta.DisplayName = latestEntry.Metadata.Name
 	chartSourceMeta.Url = chartUrl
 	chartSourceMeta.Version = latestEntry.Version
-	chartSourceMeta.PackageYaml = options.PackageYaml{
-		Url: chartSourceMeta.Url,
-	}
 
 	if upstreamYaml.Vendor != "" {
 		chartSourceMeta.Vendor = upstreamYaml.Vendor
@@ -96,18 +102,15 @@ func fetchUpstreamHelmrepo(packageWrapper *options.PackageWrapper) error {
 		chartSourceMeta.Vendor = chartSourceMeta.Name
 	}
 
-	packageWrapper.SourceMetadata = &chartSourceMeta
-
-	return nil
+	return chartSourceMeta, nil
 }
 
 //Constructs Chart Metadata for latest version published to ArtifactHub
-func fetchUpstreamArtifacthub(packageWrapper *options.PackageWrapper) error {
-	upstreamYaml := packageWrapper.UpstreamYaml
+func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	url := fmt.Sprintf("%s/%s/%s", artifactHubApi, upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
 
 	apiResp := ArtifactHubApiHelm{}
-	chartSourceMeta := options.ChartSourceMetadata{}
+	chartSourceMeta := ChartSourceMetadata{}
 
 	chartSourceMeta.Source = "ArtifactHub"
 
@@ -123,7 +126,7 @@ func fetchUpstreamArtifacthub(packageWrapper *options.PackageWrapper) error {
 
 	json.Unmarshal([]byte(body), &apiResp)
 	if apiResp.ContentUrl == "" {
-		return fmt.Errorf("ArtifactHub package: %s/%s not found", upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
+		return chartSourceMeta, fmt.Errorf("ArtifactHub package: %s/%s not found", upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
 	}
 
 	if upstreamYaml.Vendor != "" {
@@ -138,13 +141,8 @@ func fetchUpstreamArtifacthub(packageWrapper *options.PackageWrapper) error {
 	chartSourceMeta.Name = apiResp.NormalizedName
 	chartSourceMeta.Url = apiResp.ContentUrl
 	chartSourceMeta.Version = apiResp.Version
-	chartSourceMeta.PackageYaml = options.PackageYaml{
-		Url: chartSourceMeta.Url,
-	}
 
-	packageWrapper.SourceMetadata = &chartSourceMeta
-
-	return nil
+	return chartSourceMeta, nil
 }
 
 func getGitHubUserAndRepo(gitUrl string) (string, string, error) {
@@ -186,9 +184,8 @@ func fetchGitHubRelease(repoUrl string) (string, error) {
 }
 
 //Constructs Chart Metadata for latest version published to Git Repository
-func fetchUpstreamGit(packageWrapper *options.PackageWrapper) error {
+func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	var upstreamCommit string
-	upstreamYaml := packageWrapper.UpstreamYaml
 	cloneOptions := git.CloneOptions{
 		URL: upstreamYaml.GitRepoUrl,
 	}
@@ -202,34 +199,34 @@ func fetchUpstreamGit(packageWrapper *options.PackageWrapper) error {
 
 	tempDir, err := os.MkdirTemp("", "gitRepo")
 	if err != nil {
-		return err
+		return ChartSourceMetadata{}, err
 	}
 	r, err := git.PlainClone(tempDir, false, &cloneOptions)
 	if err != nil {
-		return err
+		return ChartSourceMetadata{}, err
 	}
 
 	if upstreamYaml.GitHubRelease {
-		upstreamCommit, err = fetchGitHubRelease(packageWrapper.UpstreamYaml.GitRepoUrl)
+		upstreamCommit, err = fetchGitHubRelease(upstreamYaml.GitRepoUrl)
 		if err != nil {
-			return err
+			return ChartSourceMetadata{}, err
 		}
 
 		wt, err := r.Worktree()
 		if err != nil {
-			return err
+			return ChartSourceMetadata{}, err
 		}
 
 		err = wt.Checkout(&git.CheckoutOptions{
 			Hash: plumbing.NewHash(upstreamCommit),
 		})
 		if err != nil {
-			return err
+			return ChartSourceMetadata{}, err
 		}
 	} else {
 		ref, err := r.Head()
 		if err != nil {
-			return err
+			return ChartSourceMetadata{}, err
 		}
 
 		upstreamCommit = ref.Hash().String()
@@ -240,7 +237,7 @@ func fetchUpstreamGit(packageWrapper *options.PackageWrapper) error {
 		sourcePath = filepath.Join(sourcePath, upstreamYaml.GitSubDirectory)
 		if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
 			err = fmt.Errorf("git subdirectory '%s' does not exist", upstreamYaml.GitSubDirectory)
-			return err
+			return ChartSourceMetadata{}, err
 		}
 	}
 	helmChart, err := loader.Load(sourcePath)
@@ -248,17 +245,14 @@ func fetchUpstreamGit(packageWrapper *options.PackageWrapper) error {
 		logrus.Debug(err)
 	}
 
-	chartSourceMeta := options.ChartSourceMetadata{
-		DisplayName: helmChart.Metadata.Name,
-		Name:        helmChart.Metadata.Name,
-		Url:         upstreamYaml.GitRepoUrl,
-		Version:     helmChart.Metadata.Version,
-		Source:      "Git",
-		PackageYaml: options.PackageYaml{
-			Url:          upstreamYaml.GitRepoUrl,
-			Commit:       upstreamCommit,
-			SubDirectory: upstreamYaml.GitSubDirectory,
-		},
+	chartSourceMeta := ChartSourceMetadata{
+		Commit:       upstreamCommit,
+		DisplayName:  helmChart.Metadata.Name,
+		Name:         helmChart.Metadata.Name,
+		Source:       "Git",
+		SubDirectory: upstreamYaml.GitSubDirectory,
+		Url:          upstreamYaml.GitRepoUrl,
+		Version:      helmChart.Metadata.Version,
 	}
 
 	if upstreamYaml.Vendor != "" {
@@ -272,20 +266,18 @@ func fetchUpstreamGit(packageWrapper *options.PackageWrapper) error {
 		logrus.Debug(err)
 	}
 
-	packageWrapper.SourceMetadata = &chartSourceMeta
-	return nil
+	return chartSourceMeta, nil
 }
 
-func FetchUpstream(packageWrapper *options.PackageWrapper) error {
-	upstreamYaml := packageWrapper.UpstreamYaml
+func FetchUpstream(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	if upstreamYaml.AHRepoName != "" && upstreamYaml.AHPackageName != "" {
-		return fetchUpstreamArtifacthub(packageWrapper)
+		return fetchUpstreamArtifacthub(upstreamYaml)
 	} else if upstreamYaml.HelmRepoUrl != "" && upstreamYaml.HelmChart != "" {
-		return fetchUpstreamHelmrepo(packageWrapper)
+		return fetchUpstreamHelmrepo(upstreamYaml)
 	} else if upstreamYaml.GitRepoUrl != "" {
-		return fetchUpstreamGit(packageWrapper)
+		return fetchUpstreamGit(upstreamYaml)
 	} else {
 		err := errors.New("no valid repo options found")
-		return err
+		return ChartSourceMetadata{}, err
 	}
 }

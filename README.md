@@ -15,6 +15,7 @@ Options for `upstream.yaml`
 | Chart.yaml | | Allows setting/overriding the value of any valid Chart.yaml variable
 | DisplayName | | Sets the name the chart will be listed under in the Rancher UI
 | GitBranch | GitRepo | Defines which branch to pull from the upstream GitRepo
+| GitHubRelease | GitRepo | If true, will pull latest GitHub release from repo. Requires GitHub URL
 | GitRepo | | Defines the git repo to pull from
 | GitSubdirectory | GitRepo | Allows selection of a subdirectory of the upstream git repo to pull the chart from
 | HelmChart | HelmRepo | Defines which chart to pull from the upstream Helm repo
