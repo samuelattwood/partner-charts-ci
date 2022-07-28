@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 
 	"github.com/sirupsen/logrus"
 
@@ -20,9 +21,10 @@ const (
 
 type PackageYaml struct {
 	Commit         string `json:"commit,omitempty"`
-	PackageVersion string `json:"packageVersion,omitempty"`
+	PackageVersion int    `json:"packageVersion,omitempty"`
 	SubDirectory   string `json:"subdirectory,omitempty"`
 	Url            string `json:"url"`
+	Version        string `json:"version,omitempty"`
 }
 
 type UpstreamYaml struct {
@@ -36,14 +38,20 @@ type UpstreamYaml struct {
 	GitSubDirectory string         `json:"GitSubdirectory"`
 	HelmChart       string         `json:"HelmChart"`
 	HelmRepoUrl     string         `json:"HelmRepo"`
+	PackageVersion  *int           `json:"PackageVersion"`
 	ReleaseName     string         `json:"ReleaseName"`
 	Vendor          string         `json:"Vendor"`
+	Version         string         `json:"Version"`
 }
 
 func GeneratePackageYaml(packageYamlValues map[string]string) PackageYaml {
+	packageVersion, err := strconv.Atoi(packageYamlValues["PackageVersion"])
+	if err != nil {
+		logrus.Error(err)
+	}
 	return PackageYaml{
 		Commit:         packageYamlValues["Commit"],
-		PackageVersion: packageYamlValues["PackageVersion"],
+		PackageVersion: packageVersion,
 		SubDirectory:   packageYamlValues["SubDirectory"],
 		Url:            packageYamlValues["Url"],
 	}
