@@ -13,7 +13,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/rancher/charts-build-scripts/pkg/charts"
 	"github.com/rancher/charts-build-scripts/pkg/filesystem"
-	"github.com/samuelattwood/partner-charts-ci/pkg/export"
+	"github.com/samuelattwood/partner-charts-ci/pkg/conform"
 	"github.com/samuelattwood/partner-charts-ci/pkg/fetcher"
 	"github.com/samuelattwood/partner-charts-ci/pkg/parse"
 	"github.com/sirupsen/logrus"
@@ -21,7 +21,6 @@ import (
 
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/repo"
 )
 
@@ -102,77 +101,6 @@ func commitChanges(updatedList []PackageWrapper) error {
 	return nil
 }
 
-func applyChartAnnotations(chartMetadata *chart.Metadata, chartSourceMetadata *fetcher.ChartSourceMetadata) {
-	if chartMetadata.Annotations == nil {
-		chartMetadata.Annotations = make(map[string]string)
-	}
-
-	if _, ok := chartMetadata.Annotations["catalog.cattle.io/certified"]; !ok {
-		chartMetadata.Annotations["catalog.cattle.io/certified"] = "partner"
-	}
-	if _, ok := chartMetadata.Annotations["catalog.cattle.io/display-name"]; !ok {
-		chartMetadata.Annotations["catalog.cattle.io/display-name"] = chartSourceMetadata.DisplayName
-	}
-	if _, ok := chartMetadata.Annotations["catalog.cattle.io/release-name"]; !ok {
-		chartMetadata.Annotations["catalog.cattle.io/release-name"] = chartSourceMetadata.Name
-	}
-}
-
-func overlayChartMetadata(chartMetadata *chart.Metadata, overlay chart.Metadata) {
-	if overlay.Name != "" {
-		chartMetadata.Name = overlay.Name
-	}
-	if overlay.Home != "" {
-		chartMetadata.Home = overlay.Home
-	}
-	if overlay.Sources != nil {
-		chartMetadata.Sources = overlay.Sources
-	}
-	if overlay.Version != "" {
-		chartMetadata.Version = overlay.Version
-	}
-	if overlay.Description != "" {
-		chartMetadata.Description = overlay.Description
-	}
-	if overlay.Keywords != nil {
-		chartMetadata.Keywords = overlay.Keywords
-	}
-	if overlay.Maintainers != nil {
-		chartMetadata.Maintainers = overlay.Maintainers
-	}
-	if overlay.Icon != "" {
-		chartMetadata.Icon = overlay.Icon
-	}
-	if overlay.APIVersion != "" {
-		chartMetadata.APIVersion = overlay.APIVersion
-	}
-	if overlay.Condition != "" {
-		chartMetadata.Condition = overlay.Condition
-	}
-	if overlay.Tags != "" {
-		chartMetadata.Tags = overlay.Tags
-	}
-	if overlay.AppVersion != "" {
-		chartMetadata.AppVersion = overlay.AppVersion
-	}
-	if overlay.Deprecated {
-		chartMetadata.Deprecated = overlay.Deprecated
-	}
-	if overlay.Annotations != nil {
-		chartMetadata.Annotations = overlay.Annotations
-	}
-	if overlay.KubeVersion != "" {
-		chartMetadata.KubeVersion = overlay.KubeVersion
-	}
-	if overlay.Dependencies != nil {
-		chartMetadata.Dependencies = overlay.Dependencies
-	}
-	if overlay.Type != "" {
-		chartMetadata.Type = overlay.Type
-	}
-
-}
-
 func cleanPackage(packageWrapper PackageWrapper) error {
 	var err error
 	packageWrapper.PackageYaml, err = generatePackageYaml(packageWrapper.Path, *packageWrapper.SourceMetadata)
@@ -216,6 +144,8 @@ func preparePackage(packageWrapper PackageWrapper) error {
 		return err
 	}
 	currentPackage := packageWrapper.Package
+
+	conform.LinkOverlayFiles(packageWrapper.Path)
 
 	err = currentPackage.Prepare()
 	if err != nil {
@@ -263,32 +193,31 @@ func generateChartSourceMetadata(upstreamYaml parse.UpstreamYaml) (*fetcher.Char
 	return &sourceMetadata, nil
 }
 
-func loadAndOverlayChart(packageWrapper PackageWrapper) error {
-	if packageWrapper.UpstreamYaml.DisplayName != "" {
-		packageWrapper.SourceMetadata.DisplayName = packageWrapper.UpstreamYaml.DisplayName
-	}
-	if packageWrapper.UpstreamYaml.ReleaseName != "" {
-		packageWrapper.SourceMetadata.Name = packageWrapper.UpstreamYaml.ReleaseName
-	}
-
+func initializeChart(packageWrapper PackageWrapper) (*chart.Chart, error) {
 	err := preparePackage(packageWrapper)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	chartDirectoryPath := path.Join(packageWrapper.Path, repositoryChartsDir)
-	export.StandardizeChartDirectory(chartDirectoryPath, "")
+	conform.StandardizeChartDirectory(chartDirectoryPath, "")
 
 	helmChart, err := loader.Load(chartDirectoryPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return helmChart, nil
+}
+
+func conformChart(packageWrapper PackageWrapper) error {
+	helmChart, err := initializeChart(packageWrapper)
 	if err != nil {
 		return err
 	}
 
-	overlayChartMetadata(helmChart.Metadata, packageWrapper.UpstreamYaml.ChartYaml)
-
-	applyChartAnnotations(helmChart.Metadata, packageWrapper.SourceMetadata)
-
-	export.StandardizeChartDirectory(chartDirectoryPath, "")
+	conform.OverlayChartMetadata(helmChart.Metadata, packageWrapper.UpstreamYaml.ChartYaml)
+	conform.ApplyChartAnnotations(helmChart.Metadata, packageWrapper.SourceMetadata)
 
 	err = packageWrapper.Package.GeneratePatch()
 	if err != nil {
@@ -300,7 +229,7 @@ func loadAndOverlayChart(packageWrapper PackageWrapper) error {
 		logrus.Debug(err)
 	}
 
-	err = writeChart(helmChart, packageWrapper.SourceMetadata)
+	err = saveChart(helmChart, packageWrapper.SourceMetadata)
 	if err != nil {
 		return err
 	}
@@ -313,27 +242,28 @@ func loadAndOverlayChart(packageWrapper PackageWrapper) error {
 	return err
 }
 
-func writeChart(helmChart *chart.Chart, chartSourceMetadata *fetcher.ChartSourceMetadata) error {
+func saveChart(helmChart *chart.Chart, sourceMetadata *fetcher.ChartSourceMetadata) error {
 	assetsPath := filepath.Join(
 		getRepoRoot(),
 		repositoryAssetsDir,
-		strings.ToLower(chartSourceMetadata.Vendor))
+		strings.ToLower(sourceMetadata.Vendor))
 
 	chartsPath := filepath.Join(
 		getRepoRoot(),
 		repositoryChartsDir,
-		strings.ToLower(chartSourceMetadata.Vendor),
+		strings.ToLower(sourceMetadata.Vendor),
 		helmChart.Metadata.Name,
 		helmChart.Metadata.Version)
 
-	_, err := chartutil.Save(helmChart, assetsPath)
+	err := conform.ExportChartAsset(helmChart, assetsPath)
 	if err != nil {
-		error := fmt.Errorf("unable to save chart to %s", assetsPath)
-		return error
+		return err
 	}
 
-	logrus.Info(chartsPath)
-	export.ExportChartDirectory(helmChart, chartsPath)
+	err = conform.ExportChartDirectory(helmChart, chartsPath)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -370,7 +300,9 @@ func writeIndex() error {
 	if err != nil {
 		return err
 	}
-	newHelmIndexYaml, err := repo.IndexDirectory(getRepoRoot()+"/"+repositoryAssetsDir, repositoryAssetsDir)
+
+	assetsDirectoryPath := filepath.Join(getRepoRoot(), repositoryAssetsDir)
+	newHelmIndexYaml, err := repo.IndexDirectory(assetsDirectoryPath, repositoryAssetsDir)
 	if err != nil {
 		return err
 	}
@@ -387,7 +319,7 @@ func writeIndex() error {
 func fetchUpstreams(packageWrapperList []PackageWrapper) {
 	skippedList := make([]string, 0)
 	for _, currentPackage := range packageWrapperList {
-		err := loadAndOverlayChart(currentPackage)
+		err := conformChart(currentPackage)
 		if err != nil {
 			logrus.Error(err)
 			skippedList = append(skippedList, currentPackage.Name)
@@ -410,8 +342,11 @@ func parseUpstream(packagePath string) (*parse.UpstreamYaml, error) {
 	return &upstreamYaml, nil
 }
 
-func generatePackageList() []PackageWrapper {
-	currentPackage := os.Getenv(packageEnvVariable)
+func generatePackageList(checkEnvVariable bool) []PackageWrapper {
+	var currentPackage string
+	if checkEnvVariable {
+		currentPackage = os.Getenv(packageEnvVariable)
+	}
 	packageDirectory := filepath.Join(getRepoRoot(), repositoryPackagesDir)
 	packageMap, err := parse.ListPackages(packageDirectory, currentPackage)
 	if err != nil {
@@ -439,7 +374,7 @@ func generatePackageList() []PackageWrapper {
 
 func populatePackages(onlyUpdates bool, print bool) ([]PackageWrapper, error) {
 	packageList := make([]PackageWrapper, 0)
-	for _, packageWrapper := range generatePackageList() {
+	for _, packageWrapper := range generatePackageList(true) {
 		var err error
 		packageWrapper.UpstreamYaml, err = parseUpstream(packageWrapper.Path)
 		if err != nil {
@@ -486,6 +421,13 @@ func populatePackages(onlyUpdates bool, print bool) ([]PackageWrapper, error) {
 			return nil, err
 		}
 
+		if packageWrapper.UpstreamYaml.DisplayName != "" {
+			packageWrapper.SourceMetadata.DisplayName = packageWrapper.UpstreamYaml.DisplayName
+		}
+		if packageWrapper.UpstreamYaml.ReleaseName != "" {
+			packageWrapper.SourceMetadata.Name = packageWrapper.UpstreamYaml.ReleaseName
+		}
+
 		packageList = append(packageList, packageWrapper)
 
 	}
@@ -494,7 +436,7 @@ func populatePackages(onlyUpdates bool, print bool) ([]PackageWrapper, error) {
 }
 
 func listPackages(c *cli.Context) {
-	packageList := generatePackageList()
+	packageList := generatePackageList(false)
 	vendorSorted := make([]string, 0)
 	for _, packageWrapper := range packageList {
 		packagesPath := filepath.Join(getRepoRoot(), repositoryPackagesDir)
