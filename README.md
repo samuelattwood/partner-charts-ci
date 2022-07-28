@@ -20,35 +20,52 @@ Options for `upstream.yaml`
 | GitSubdirectory | GitRepo | Allows selection of a subdirectory of the upstream git repo to pull the chart from
 | HelmChart | HelmRepo | Defines which chart to pull from the upstream Helm repo
 | HelmRepo | HelmChart | Defines the upstream Helm repo to pull from
+| PackageVersion | | Used to generate new patch version of chart
 | ReleaseName | | Sets the value of the release-name Rancher annotation
 | Vendor | | Sets the vendor name providing the chart
+| Version | | Allows for overriding of upstream chart version
 
-### Artifact Hub Example
+### Artifact Hub
 ```yaml
 ---
 ArtifactHubRepo: kubewarden
 ArtifactHubPackage: kubewarden-controller
+Vendor: SUSE
 Chart.yaml:
   kubeVersion: '1.21-0 - 1.24-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 ```
 
-### Git Repo Example
+### Git Repo
 ```yaml
 ---
 GitRepo: https://github.com/kubewarden/helm-charts.git
 GitBranch: main
 GitSubdirectory: charts/kubewarden-controller
+Vendor: SUSE
 Chart.yaml:
   kubeVersion: '1.21-0 - 1.24-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 ```
 
-### Helm Repo Example
+### GitHub Release
+```yaml
+---
+GitRepo: https://github.com/kubewarden/helm-charts.git
+GitHubRelease: true
+GitSubdirectory: charts/kubewarden-controller
+Vendor: SUSE
+Chart.yaml:
+  kubeVersion: '1.21-0 - 1.24-0'
+  icon: https://www.kubewarden.io/images/icon-kubewarden.svg
+```
+
+### Helm Repo
 ```yaml
 ---
 HelmRepo: https://charts.kubewarden.io
 HelmChart: kubewarden-controller
+Vendor: SUSE
 Chart.yaml:
   kubeVersion: '1.21-0 - 1.24-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
