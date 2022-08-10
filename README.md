@@ -8,7 +8,8 @@ This tool is intended to aid in ingest, generation, and maintenance of the Ranch
 3. Ensure the 'main-source' branch is checked out
 4. Create subdirectories in **packages** in the form of *vendor/chart*
 5. Create your **upstream.yaml**
-6. Commit your **upstream.yaml**
+6. Create any add-on files like your app-readme.md and questions.yaml in an 'overlay' subdirectory (Optional)
+6. Commit your packages directory
 7. Push your commit and open a pull request
 
 ```bash
@@ -25,6 +26,9 @@ ChartMetadata:
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 EOF
 
+mkdir packages/suse/kubewarden-controller/overlay
+echo "Example app-readme.md" > packages/suse/kubewarden-controller/overlay/app-readme.md
+
 git add packages/suse/kubewarden-controller
 git commit -m "Submitting suse/kubewarden-controller"
 git push origin main-source
@@ -35,6 +39,14 @@ git push origin main-source
 ### Using the tool
 If you would like to test your configuration using this tool, simply download the latest release for your architecture. The 'auto' function is what will be run to generate new versions.
 
+Direct Links
+
+[macOS Universal](https://github.com/samuelattwood/partner-charts-ci/releases/latest/download/partner-charts-ci-darwin-universal)
+
+[Linux x86_64](https://github.com/samuelattwood/partner-charts-ci/releases/latest/download/partner-charts-ci-linux-amd64)
+
+[Windows x86_64](https://github.com/samuelattwood/partner-charts-ci/releases/latest/download/partner-charts-ci-windows-amd64)
+
 The example below downloads the macOS Universal Binary and assumes we have already committed an **upstream.yaml** to **packages/suse/kubewarden-controller/upstream.yaml**
 ```bash
 git clone -b main-source git@github.com:samuelattwood/partner-charts.git
@@ -44,6 +56,10 @@ chmod +x partner-charts-ci
 export PACKAGE=suse/kubewarden-controller
 ./partner-charts-ci auto
 ```
+
+### Overlay
+
+Any files placed in the *packages/vendor/chart/overlay* directory will be overlayed onto the chart. This allows for adding or overwriting files within the chart as needed. The primary intended purpose is for adding the app-readme.md and questions.yaml files.
 
 ### Configuration File
 
