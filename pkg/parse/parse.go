@@ -5,7 +5,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 
 	"github.com/sirupsen/logrus"
 
@@ -22,6 +21,7 @@ const (
 type PackageYaml struct {
 	Commit         string `json:"commit,omitempty"`
 	PackageVersion int    `json:"packageVersion,omitempty"`
+	Path           string `json:"-"`
 	SubDirectory   string `json:"subdirectory,omitempty"`
 	Url            string `json:"url"`
 	Version        string `json:"version,omitempty"`
@@ -30,41 +30,47 @@ type PackageYaml struct {
 type UpstreamYaml struct {
 	AHPackageName   string         `json:"ArtifactHubPackage"`
 	AHRepoName      string         `json:"ArtifactHubRepo"`
-	ChartYaml       chart.Metadata `json:"Chart.yaml"`
+	ChartYaml       chart.Metadata `json:"ChartMetadata"`
 	DisplayName     string         `json:"DisplayName"`
+	Fetch           string         `json:"Fetch"`
 	GitBranch       string         `json:"GitBranch"`
 	GitHubRelease   bool           `json:"GitHubRelease"`
 	GitRepoUrl      string         `json:"GitRepo"`
 	GitSubDirectory string         `json:"GitSubdirectory"`
 	HelmChart       string         `json:"HelmChart"`
 	HelmRepoUrl     string         `json:"HelmRepo"`
-	PackageVersion  *int           `json:"PackageVersion"`
+	TrackVersions   []string       `json:"TrackVersions"`
 	ReleaseName     string         `json:"ReleaseName"`
 	Vendor          string         `json:"Vendor"`
-	Version         string         `json:"Version"`
 }
 
-func GeneratePackageYaml(packageYamlValues map[string]string) PackageYaml {
-	packageVersion, err := strconv.Atoi(packageYamlValues["PackageVersion"])
-	if err != nil {
-		logrus.Error(err)
+func (packageYaml PackageYaml) Write(overWrite bool) error {
+	filePath := path.Join(packageYaml.Path, PackageOptionsFile)
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		if !overWrite {
+			return nil
+		} else {
+			packageYaml.Remove()
+		}
 	}
-	return PackageYaml{
-		Commit:         packageYamlValues["Commit"],
-		PackageVersion: packageVersion,
-		SubDirectory:   packageYamlValues["SubDirectory"],
-		Url:            packageYamlValues["Url"],
-	}
-}
 
-func (packageYaml PackageYaml) WritePackageYaml(packagePath string) error {
-	filePath := path.Join(packagePath, PackageOptionsFile)
 	packageYamlFile, err := yaml.Marshal(packageYaml)
 	if err != nil {
 		return err
 	}
 
 	err = ioutil.WriteFile(filePath, packageYamlFile, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (packageYaml PackageYaml) Remove() error {
+	logrus.Debugf("Removing package yaml from %s\n", packageYaml.Path)
+	filePath := path.Join(packageYaml.Path, PackageOptionsFile)
+	err := os.Remove(filePath)
 	if err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/samuelattwood/partner-charts-ci/pkg/parse"
 	"github.com/sirupsen/logrus"
 
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/repo"
 
@@ -49,12 +50,11 @@ type ChartSourceMetadata struct {
 	Name         string
 	Source       string
 	SubDirectory string
-	Url          string
 	Vendor       string
-	Version      string
+	Versions     repo.ChartVersions
 }
 
-//Constructs Chart Metadata for latest version published to Helm Repository
+// Constructs Chart Metadata for latest version published to Helm Repository
 func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	url := fmt.Sprintf("%s/index.yaml", upstreamYaml.HelmRepoUrl)
 
@@ -82,19 +82,16 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 	}
 
 	indexYaml.SortEntries()
+	upstreamVersions := indexYaml.Entries[upstreamYaml.HelmChart]
 
-	chartEntries := indexYaml.Entries[upstreamYaml.HelmChart]
-	latestEntry := chartEntries[0]
+	//	chartUrl := latestEntry.URLs[0]
+	//	if !strings.HasPrefix(chartUrl, "http") {
+	//		chartUrl = upstreamYaml.HelmRepoUrl + "/" + latestEntry.URLs[0]
+	//	}
 
-	chartUrl := latestEntry.URLs[0]
-	if !strings.HasPrefix(chartUrl, "http") {
-		chartUrl = upstreamYaml.HelmRepoUrl + "/" + latestEntry.URLs[0]
-	}
-
-	chartSourceMeta.Name = latestEntry.Metadata.Name
-	chartSourceMeta.DisplayName = latestEntry.Metadata.Name
-	chartSourceMeta.Url = chartUrl
-	chartSourceMeta.Version = latestEntry.Version
+	chartSourceMeta.Name = upstreamVersions[0].Metadata.Name
+	chartSourceMeta.DisplayName = upstreamVersions[0].Metadata.Name
+	chartSourceMeta.Versions = indexYaml.Entries[upstreamYaml.HelmChart]
 
 	if upstreamYaml.Vendor != "" {
 		chartSourceMeta.Vendor = upstreamYaml.Vendor
@@ -105,7 +102,7 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 	return chartSourceMeta, nil
 }
 
-//Constructs Chart Metadata for latest version published to ArtifactHub
+// Constructs Chart Metadata for latest version published to ArtifactHub
 func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	url := fmt.Sprintf("%s/%s/%s", artifactHubApi, upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
 
@@ -137,10 +134,21 @@ func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetad
 		chartSourceMeta.Vendor = apiResp.NormalizedName
 	}
 
+	versionMetadata := chart.Metadata{
+		Name:    apiResp.Name,
+		Version: apiResp.Version,
+	}
+
+	version := repo.ChartVersion{
+		Metadata: &versionMetadata,
+		URLs:     []string{apiResp.ContentUrl},
+	}
+
+	versions := repo.ChartVersions{&version}
+
 	chartSourceMeta.DisplayName = apiResp.Name
 	chartSourceMeta.Name = apiResp.NormalizedName
-	chartSourceMeta.Url = apiResp.ContentUrl
-	chartSourceMeta.Version = apiResp.Version
+	chartSourceMeta.Versions = versions
 
 	return chartSourceMeta, nil
 }
@@ -183,7 +191,7 @@ func fetchGitHubRelease(repoUrl string) (string, error) {
 	return releaseCommit, nil
 }
 
-//Constructs Chart Metadata for latest version published to Git Repository
+// Constructs Chart Metadata for latest version published to Git Repository
 func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	var upstreamCommit string
 	cloneOptions := git.CloneOptions{
@@ -245,14 +253,20 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 		logrus.Debug(err)
 	}
 
+	version := repo.ChartVersion{
+		Metadata: helmChart.Metadata,
+		URLs:     []string{upstreamYaml.GitRepoUrl},
+	}
+
+	versions := repo.ChartVersions{&version}
+
 	chartSourceMeta := ChartSourceMetadata{
 		Commit:       upstreamCommit,
 		DisplayName:  helmChart.Metadata.Name,
 		Name:         helmChart.Metadata.Name,
 		Source:       "Git",
 		SubDirectory: upstreamYaml.GitSubDirectory,
-		Url:          upstreamYaml.GitRepoUrl,
-		Version:      helmChart.Metadata.Version,
+		Versions:     versions,
 	}
 
 	if upstreamYaml.Vendor != "" {
