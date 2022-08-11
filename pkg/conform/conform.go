@@ -58,9 +58,12 @@ func OverlayChartMetadata(chartMetadata *chart.Metadata, overlay chart.Metadata)
 	if overlay.Annotations != nil {
 		chartMetadata.Annotations = overlay.Annotations
 	}
+	/* Leaving in place, commented, to match upstream Helm metadata
+	   Annotation 'catalog.cattle.io/kube-version' is prefered
 	if overlay.KubeVersion != "" {
 		chartMetadata.KubeVersion = overlay.KubeVersion
 	}
+	*/
 	if overlay.Dependencies != nil {
 		chartMetadata.Dependencies = overlay.Dependencies
 	}

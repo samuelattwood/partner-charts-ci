@@ -21,6 +21,7 @@ cat <<EOF > packages/suse/kubewarden-controller/upstream.yaml
 HelmRepo: https://charts.kubewarden.io
 HelmChart: kubewarden-controller
 Vendor: SUSE
+DisplayName: Kubewarden Controller
 ChartMetadata:
   kubeVersion: '1.21-0 - 1.24-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
@@ -92,6 +93,7 @@ Options for `upstream.yaml`
 HelmRepo: https://charts.kubewarden.io
 HelmChart: kubewarden-controller
 Vendor: SUSE
+DisplayName: Kubewarden Controller
 Fetch: newer
 TrackVersions:
   - 0.4
@@ -108,6 +110,7 @@ ChartMetadata:
 ArtifactHubRepo: kubewarden
 ArtifactHubPackage: kubewarden-controller
 Vendor: SUSE
+DisplayName: Kubewarden Controller
 ChartMetadata:
   kubeVersion: '1.21-0 - 1.24-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
@@ -120,6 +123,7 @@ GitRepo: https://github.com/kubewarden/helm-charts.git
 GitBranch: main
 GitSubdirectory: charts/kubewarden-controller
 Vendor: SUSE
+DisplayName: Kubewarden Controller
 ChartMetadata:
   kubeVersion: '1.21-0 - 1.24-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
@@ -132,6 +136,7 @@ GitRepo: https://github.com/kubewarden/helm-charts.git
 GitHubRelease: true
 GitSubdirectory: charts/kubewarden-controller
 Vendor: SUSE
+DisplayName: Kubewarden Controller
 ChartMetadata:
   kubeVersion: '1.21-0 - 1.24-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
