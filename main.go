@@ -65,6 +65,7 @@ func (packageWrapper PackageWrapper) patch() error {
 	if !packageWrapper.ManualUpdate {
 		packageYaml, err = writePackageYaml(
 			packageWrapper.Path,
+			packageWrapper.UpstreamYaml.PackageVersion,
 			packageWrapper.SourceMetadata.Commit,
 			packageWrapper.SourceMetadata.SubDirectory,
 			packageWrapper.SourceMetadata.Versions[0].URLs[0],
@@ -224,12 +225,13 @@ func (packageWrapper PackageWrapper) hide() error {
 		assetsPath := filepath.Join(
 			getRepoRoot(),
 			repositoryAssetsDir,
-			strings.ToLower(packageWrapper.SourceMetadata.Vendor))
+			packageWrapper.SourceMetadata.ParsedVendor,
+		)
 
 		versionPath := path.Join(
 			getRepoRoot(),
 			repositoryChartsDir,
-			packageWrapper.SourceMetadata.Vendor,
+			packageWrapper.SourceMetadata.ParsedVendor,
 			chartName,
 			version.Version,
 		)
@@ -339,16 +341,16 @@ func commitChanges(updatedList []PackageWrapper) error {
 	for _, packageWrapper := range updatedList {
 		assetsPath := path.Join(
 			repositoryAssetsDir,
-			strings.ToLower(packageWrapper.SourceMetadata.Vendor))
+			packageWrapper.SourceMetadata.ParsedVendor)
 
 		chartsPath := path.Join(
 			repositoryChartsDir,
-			strings.ToLower(packageWrapper.SourceMetadata.Vendor),
+			packageWrapper.SourceMetadata.ParsedVendor,
 			packageWrapper.SourceMetadata.Versions[0].Name)
 
 		packagesPath := path.Join(
 			repositoryPackagesDir,
-			strings.ToLower(packageWrapper.SourceMetadata.Vendor),
+			packageWrapper.SourceMetadata.ParsedVendor,
 			packageWrapper.SourceMetadata.Versions[0].Name)
 
 		wt.Add(assetsPath)
@@ -396,6 +398,7 @@ func cleanPackage(packagePath string, manualUpdate bool) error {
 	if !manualUpdate {
 		packageYaml, err = writePackageYaml(
 			packagePath,
+			0,
 			"",
 			"",
 			"https://.tgz",
@@ -451,7 +454,7 @@ func prepareManualPackage(packagePath string) error {
 }
 
 // Prepares package for modification via patch
-func preparePackage(packagePath string, sourceMetadata fetcher.ChartSourceMetadata, chartVersion repo.ChartVersion) error {
+func preparePackage(packagePath string, sourceMetadata *fetcher.ChartSourceMetadata, chartVersion *repo.ChartVersion) error {
 	logrus.Debugf("Generated package from %s", packagePath)
 	pkg, err := generatePackage(packagePath)
 	if err != nil {
@@ -494,13 +497,14 @@ func generatePackage(packagePath string) (*charts.Package, error) {
 	return pkg, nil
 }
 
-func writePackageYaml(packagePath string, commit string, subdirectory string, url string, overWrite bool) (*parse.PackageYaml, error) {
+func writePackageYaml(packagePath string, packageVersion int, commit string, subdirectory string, url string, overWrite bool) (*parse.PackageYaml, error) {
 	logrus.Debugf("Generating package yaml in %s\n", packagePath)
 	packageYaml := parse.PackageYaml{
-		Commit:       commit,
-		Path:         packagePath,
-		SubDirectory: subdirectory,
-		Url:          url,
+		Commit:         commit,
+		PackageVersion: packageVersion,
+		Path:           packagePath,
+		SubDirectory:   subdirectory,
+		Url:            url,
 	}
 
 	logrus.Debugf("Writing package yaml in %s\n", packagePath)
@@ -625,7 +629,7 @@ func initializeChart(packagePath string, sourceMetadata fetcher.ChartSourceMetad
 		err = prepareManualPackage(packagePath)
 
 	} else {
-		err = preparePackage(packagePath, sourceMetadata, chartVersion)
+		err = preparePackage(packagePath, &sourceMetadata, &chartVersion)
 	}
 	if err != nil {
 		return nil, err
@@ -638,6 +642,8 @@ func initializeChart(packagePath string, sourceMetadata fetcher.ChartSourceMetad
 	if err != nil {
 		return nil, err
 	}
+
+	helmChart.Metadata.Version = chartVersion.Version
 
 	return helmChart, nil
 }
@@ -652,6 +658,7 @@ func conformPackage(packageWrapper PackageWrapper) error {
 		if !packageWrapper.ManualUpdate {
 			packageYaml, err = writePackageYaml(
 				packageWrapper.Path,
+				packageWrapper.UpstreamYaml.PackageVersion,
 				packageWrapper.SourceMetadata.Commit,
 				packageWrapper.SourceMetadata.SubDirectory,
 				chartVersion.URLs[0],
@@ -725,12 +732,12 @@ func saveChart(helmChart *chart.Chart, sourceMetadata *fetcher.ChartSourceMetada
 	assetsPath := filepath.Join(
 		getRepoRoot(),
 		repositoryAssetsDir,
-		strings.ToLower(sourceMetadata.Vendor))
+		sourceMetadata.ParsedVendor)
 
 	chartsPath := filepath.Join(
 		getRepoRoot(),
 		repositoryChartsDir,
-		strings.ToLower(sourceMetadata.Vendor),
+		sourceMetadata.ParsedVendor,
 		helmChart.Metadata.Name,
 		helmChart.Metadata.Version)
 

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,7 +51,12 @@ type ChartSourceMetadata struct {
 	Source       string
 	SubDirectory string
 	Vendor       string
+	ParsedVendor string
 	Versions     repo.ChartVersions
+}
+
+func parseVendor(vendor string) string {
+	return strings.ReplaceAll(strings.ToLower(vendor), " ", "-")
 }
 
 // Constructs Chart Metadata for latest version published to Helm Repository
@@ -68,7 +73,7 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 		logrus.Debug(err)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logrus.Debug(err)
 	}
@@ -99,6 +104,8 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 		chartSourceMeta.Vendor = chartSourceMeta.Name
 	}
 
+	chartSourceMeta.ParsedVendor = parseVendor(chartSourceMeta.Vendor)
+
 	return chartSourceMeta, nil
 }
 
@@ -116,7 +123,7 @@ func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetad
 		logrus.Debug(err)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logrus.Debug(err)
 	}
@@ -133,6 +140,8 @@ func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetad
 	} else {
 		chartSourceMeta.Vendor = apiResp.NormalizedName
 	}
+
+	chartSourceMeta.ParsedVendor = parseVendor(chartSourceMeta.Vendor)
 
 	versionMetadata := chart.Metadata{
 		Name:    apiResp.Name,
@@ -274,6 +283,8 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 	} else {
 		chartSourceMeta.Vendor = chartSourceMeta.Name
 	}
+
+	chartSourceMeta.ParsedVendor = parseVendor(chartSourceMeta.Vendor)
 
 	err = os.RemoveAll(tempDir)
 	if err != nil {
