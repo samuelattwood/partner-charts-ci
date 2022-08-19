@@ -1056,6 +1056,11 @@ func validateRepo(c *cli.Context) {
 		"assets": {},
 		"charts": {},
 	}
+
+	excludeFiles := make(map[string]struct{})
+	var exclude = struct{}{}
+	excludeFiles["README.md"] = exclude
+
 	directoryComparison := validate.DirectoryComparison{}
 
 	configYamlPath := path.Join(getRepoRoot(), configOptionsFile)
@@ -1084,7 +1089,7 @@ func validateRepo(c *cli.Context) {
 	for dirPath := range validatePaths {
 		upstreamPath := path.Join(cloneDir, dirPath)
 		updatePath := path.Join(getRepoRoot(), dirPath)
-		newComparison, err := validate.CompareDirectories(upstreamPath, updatePath)
+		newComparison, err := validate.CompareDirectories(upstreamPath, updatePath, excludeFiles)
 		if err != nil {
 			logrus.Error(err)
 		}

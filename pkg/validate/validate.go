@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/sirupsen/logrus"
 
 	"sigs.k8s.io/yaml"
@@ -57,12 +58,13 @@ func ReadConfig(configYamlPath string) (ConfigurationYaml, error) {
 }
 
 func CloneRepo(url string, branch string, targetDir string) error {
+	branchReference := fmt.Sprintf("refs/heads/%s", branch)
 	cloneOptions := git.CloneOptions{
-		URL: url,
+		URL:           url,
+		ReferenceName: plumbing.ReferenceName(branchReference),
+		SingleBranch:  true,
+		Depth:         1,
 	}
-
-	cloneOptions.RemoteName = branch
-	cloneOptions.Depth = 1
 
 	_, err := git.PlainClone(targetDir, false, &cloneOptions)
 	if err != nil {
@@ -89,7 +91,7 @@ func ChecksumFile(filePath string) (string, error) {
 	return hash, nil
 }
 
-func CompareDirectories(leftPath, rightPath string) (DirectoryComparison, error) {
+func CompareDirectories(leftPath, rightPath string, exclude map[string]struct{}) (DirectoryComparison, error) {
 	directoryComparison := DirectoryComparison{
 		Match: true,
 	}
@@ -103,7 +105,7 @@ func CompareDirectories(leftPath, rightPath string) (DirectoryComparison, error)
 		relativePath := strings.TrimPrefix(filePath, leftPath)
 		checkedSet[relativePath] = checked
 
-		if !info.IsDir() {
+		if _, ok := exclude[info.Name()]; !ok && !info.IsDir() {
 			rightFilePath := path.Join(rightPath, relativePath)
 			if _, err := os.Stat(rightFilePath); os.IsNotExist(err) {
 				directoryComparison.Removed = append(directoryComparison.Removed, relativePath)

@@ -211,7 +211,8 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 	}
 
 	if upstreamYaml.GitBranch != "" {
-		cloneOptions.RemoteName = upstreamYaml.GitBranch
+		branchReference := fmt.Sprintf("refs/heads/%s", upstreamYaml.GitBranch)
+		cloneOptions.ReferenceName = plumbing.ReferenceName(branchReference)
 	}
 	if !upstreamYaml.GitHubRelease {
 		cloneOptions.Depth = 1
