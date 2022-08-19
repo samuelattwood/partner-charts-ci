@@ -1,7 +1,6 @@
 package parse
 
 import (
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -60,7 +59,7 @@ func (packageYaml PackageYaml) Write(overWrite bool) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(filePath, packageYamlFile, 0644)
+	err = os.WriteFile(filePath, packageYamlFile, 0644)
 	if err != nil {
 		return err
 	}
@@ -93,13 +92,13 @@ func ListPackages(packageDirectory string, currentPackage string) (map[string]st
 		return packageList, err
 	}
 
-	findPackage := func(path string, info os.FileInfo, err error) error {
+	findPackage := func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			logrus.Error(err)
 		}
 
 		if !info.IsDir() && info.Name() == UpstreamOptionsFile {
-			packagePath := filepath.Dir(path)
+			packagePath := filepath.Dir(filePath)
 			packageName := filepath.Base(packagePath)
 			packageList[packageName] = packagePath
 		}
@@ -113,7 +112,7 @@ func ListPackages(packageDirectory string, currentPackage string) (map[string]st
 func ParseUpstreamYaml(packagePath string) (UpstreamYaml, error) {
 	upstreamYamlPath := filepath.Join(packagePath, UpstreamOptionsFile)
 	logrus.Debugf("attempting to parse %s", upstreamYamlPath)
-	upstreamYamlFile, err := ioutil.ReadFile(upstreamYamlPath)
+	upstreamYamlFile, err := os.ReadFile(upstreamYamlPath)
 	upstreamYaml := UpstreamYaml{}
 	if err != nil {
 		logrus.Debug(err)

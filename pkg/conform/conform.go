@@ -85,7 +85,7 @@ func ApplyChartAnnotations(chartMetadata *chart.Metadata, chartSourceMetadata *f
 		chartMetadata.Annotations["catalog.cattle.io/display-name"] = chartSourceMetadata.DisplayName
 	}
 	if _, ok := chartMetadata.Annotations["catalog.cattle.io/release-name"]; !ok {
-		chartMetadata.Annotations["catalog.cattle.io/release-name"] = chartSourceMetadata.Name
+		chartMetadata.Annotations["catalog.cattle.io/release-name"] = chartSourceMetadata.ReleaseName
 	}
 }
 

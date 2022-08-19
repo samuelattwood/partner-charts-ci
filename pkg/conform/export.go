@@ -87,7 +87,28 @@ func LinkOverlayFiles(packagePath string) error {
 	return nil
 }
 
-//Load and Unloads Chart to ensure consistent layout for overlay
+func RemoveOverlayFiles(packagePath string) error {
+	overlayPath := filepath.Join(packagePath, overlayDir)
+	if _, err := os.Stat(overlayPath); !os.IsNotExist(err) {
+		_, fileList, err := GetFileList(overlayPath, true)
+		if err != nil {
+			return err
+		}
+		for _, file := range fileList {
+			generatedPath := filepath.Join(packagePath, generatedDir, overlayDir, file)
+			if _, err := os.Stat(generatedPath); !os.IsNotExist(err) {
+				err = os.Remove(generatedPath)
+				if err != nil {
+					logrus.Error(err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// Load and Unloads Chart to ensure consistent layout for overlay
 func StandardizeChartDirectory(sourcePath string, targetPath string) error {
 	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
 		return fmt.Errorf("%s does not exist", sourcePath)

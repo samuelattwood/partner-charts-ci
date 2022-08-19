@@ -15,6 +15,7 @@ import (
 	"github.com/samuelattwood/partner-charts-ci/pkg/conform"
 	"github.com/samuelattwood/partner-charts-ci/pkg/fetcher"
 	"github.com/samuelattwood/partner-charts-ci/pkg/parse"
+	"github.com/samuelattwood/partner-charts-ci/pkg/validate"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
@@ -34,6 +35,7 @@ const (
 	repositoryChartsDir = "charts"
 	//repositoryPackagesDir sets the directory name for package configurations
 	repositoryPackagesDir = "packages"
+	configOptionsFile     = "configuration.yaml"
 )
 
 // PackageWrapper is a representation of relevant package metadata
@@ -193,7 +195,9 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 			packageWrapper.SourceMetadata.DisplayName = packageWrapper.UpstreamYaml.DisplayName
 		}
 		if packageWrapper.UpstreamYaml.ReleaseName != "" {
-			packageWrapper.SourceMetadata.Name = packageWrapper.UpstreamYaml.ReleaseName
+			packageWrapper.SourceMetadata.ReleaseName = packageWrapper.UpstreamYaml.ReleaseName
+		} else {
+			packageWrapper.SourceMetadata.ReleaseName = packageWrapper.SourceMetadata.Name
 		}
 	}
 
@@ -363,7 +367,7 @@ func commitChanges(updatedList []PackageWrapper) error {
 	commitMessage := "CI Updated Charts"
 	for _, packageWrapper := range updatedList {
 		lineItem := fmt.Sprintf("  %s/%s:\n",
-			strings.ToLower(packageWrapper.SourceMetadata.Vendor),
+			packageWrapper.SourceMetadata.ParsedVendor,
 			packageWrapper.SourceMetadata.Name)
 		for _, version := range packageWrapper.FetchVersions {
 			lineItem += fmt.Sprintf("    - %s\n", version.Version)
@@ -712,6 +716,8 @@ func conformPackage(packageWrapper PackageWrapper) error {
 
 		}
 
+		conform.RemoveOverlayFiles(packageWrapper.Path)
+
 		if packageWrapper.Save {
 			err = saveChart(helmChart, packageWrapper.SourceMetadata)
 			if err != nil {
@@ -756,13 +762,13 @@ func saveChart(helmChart *chart.Chart, sourceMetadata *fetcher.ChartSourceMetada
 	return nil
 }
 
-func getStoredVersions(releaseName string) (repo.ChartVersions, error) {
+func getStoredVersions(chartName string) (repo.ChartVersions, error) {
 	helmIndexYaml, err := readIndex()
 	storedVersions := repo.ChartVersions{}
 	if err != nil {
 		return storedVersions, err
 	}
-	if val, ok := helmIndexYaml.Entries[releaseName]; ok {
+	if val, ok := helmIndexYaml.Entries[chartName]; ok {
 		storedVersions = append(storedVersions, val...)
 	}
 
@@ -770,13 +776,13 @@ func getStoredVersions(releaseName string) (repo.ChartVersions, error) {
 }
 
 // Fetches latest stored version of chart from current index, if any
-func getLatestStoredVersion(releaseName string) (repo.ChartVersion, error) {
+func getLatestStoredVersion(chartName string) (repo.ChartVersion, error) {
 	helmIndexYaml, err := readIndex()
 	latestVersion := repo.ChartVersion{}
 	if err != nil {
 		return latestVersion, err
 	}
-	if val, ok := helmIndexYaml.Entries[releaseName]; ok {
+	if val, ok := helmIndexYaml.Entries[chartName]; ok {
 		latestVersion = *val[0]
 	}
 
@@ -1044,6 +1050,87 @@ func autoUpdate(c *cli.Context) {
 	generateChanges(true, false)
 }
 
+// CLI function call - Validates repo against released
+func validateRepo(c *cli.Context) {
+	validatePaths := map[string]validate.DirectoryComparison{
+		"assets": {},
+		"charts": {},
+	}
+	directoryComparison := validate.DirectoryComparison{}
+
+	configYamlPath := path.Join(getRepoRoot(), configOptionsFile)
+	configYaml, err := validate.ReadConfig(configYamlPath)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	cloneDir, err := os.MkdirTemp("", "gitRepo")
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	err = validate.CloneRepo(configYaml.Validate[0].Url, configYaml.Validate[0].Branch, cloneDir)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	for dirPath := range validatePaths {
+		upstreamPath := path.Join(cloneDir, dirPath)
+		updatePath := path.Join(getRepoRoot(), dirPath)
+		newComparison, err := validate.CompareDirectories(upstreamPath, updatePath)
+		if err != nil {
+			logrus.Error(err)
+		}
+		directoryComparison.Merge(newComparison)
+		validatePaths[dirPath] = newComparison
+	}
+
+	err = os.RemoveAll(cloneDir)
+	if err != nil {
+		logrus.Error(err)
+	}
+
+	if len(directoryComparison.Modified) > 0 {
+		outString := ""
+		for dirPath := range validatePaths {
+			if len(validatePaths[dirPath].Modified) > 0 {
+				outString += fmt.Sprintf("\n - %s", dirPath)
+				stringJoiner := fmt.Sprintf("\n - %s", dirPath)
+				fileList := strings.Join(validatePaths[dirPath].Modified[:], stringJoiner)
+				outString += fileList
+			}
+		}
+		logrus.Fatalf("Files Modified:%s", outString)
+	}
+
+	if len(directoryComparison.Added) > 0 {
+		outString := ""
+		for dirPath := range validatePaths {
+			if len(validatePaths[dirPath].Added) > 0 {
+				outString += fmt.Sprintf("\n - %s", dirPath)
+				stringJoiner := fmt.Sprintf("\n - %s", dirPath)
+				fileList := strings.Join(validatePaths[dirPath].Added[:], stringJoiner)
+				outString += fileList
+			}
+		}
+		logrus.Infof("Files Added:%s", outString)
+	}
+
+	if len(directoryComparison.Removed) > 0 {
+		outString := ""
+		for dirPath := range validatePaths {
+			if len(validatePaths[dirPath].Removed) > 0 {
+				outString += fmt.Sprintf("\n - %s", dirPath)
+				stringJoiner := fmt.Sprintf("\n - %s", dirPath)
+				fileList := strings.Join(validatePaths[dirPath].Removed[:], stringJoiner)
+				outString += fileList
+			}
+		}
+		logrus.Warnf("Files Removed:%s", outString)
+	}
+
+}
+
 func main() {
 	if len(os.Getenv("DEBUG")) > 0 {
 		logrus.SetLevel(logrus.DebugLevel)
@@ -1093,6 +1180,11 @@ func main() {
 			Name:   "hide",
 			Usage:  "Apply 'catalog.cattle.io/hidden' annotation to all stored versions of chart",
 			Action: hideChart,
+		},
+		{
+			Name:   "validate",
+			Usage:  "Check repo against released charts",
+			Action: validateRepo,
 		},
 	}
 

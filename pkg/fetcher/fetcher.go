@@ -52,6 +52,7 @@ type ChartSourceMetadata struct {
 	SubDirectory string
 	Vendor       string
 	ParsedVendor string
+	ReleaseName  string
 	Versions     repo.ChartVersions
 }
 
@@ -89,10 +90,12 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 	indexYaml.SortEntries()
 	upstreamVersions := indexYaml.Entries[upstreamYaml.HelmChart]
 
-	//	chartUrl := latestEntry.URLs[0]
-	//	if !strings.HasPrefix(chartUrl, "http") {
-	//		chartUrl = upstreamYaml.HelmRepoUrl + "/" + latestEntry.URLs[0]
-	//	}
+	for i := range upstreamVersions {
+		chartUrl := upstreamVersions[i].URLs[0]
+		if !strings.HasPrefix(chartUrl, "http") {
+			upstreamVersions[i].URLs[0] = upstreamYaml.HelmRepoUrl + "/" + chartUrl
+		}
+	}
 
 	chartSourceMeta.Name = upstreamVersions[0].Metadata.Name
 	chartSourceMeta.DisplayName = upstreamVersions[0].Metadata.Name
