@@ -1059,9 +1059,16 @@ func validateRepo(c *cli.Context) {
 	directoryComparison := validate.DirectoryComparison{}
 
 	configYamlPath := path.Join(getRepoRoot(), configOptionsFile)
+	if _, err := os.Stat(configYamlPath); os.IsNotExist(err) {
+		logrus.Fatalf("Unable to read %s\n", configOptionsFile)
+	}
 	configYaml, err := validate.ReadConfig(configYamlPath)
 	if err != nil {
 		logrus.Fatal(err)
+	}
+
+	if len(configYaml.Validate) == 0 || configYaml.Validate[0].Branch == "" || configYaml.Validate[0].Url == "" {
+		logrus.Fatal("Invalid validation configuration")
 	}
 
 	cloneDir, err := os.MkdirTemp("", "gitRepo")
@@ -1128,6 +1135,9 @@ func validateRepo(c *cli.Context) {
 		}
 		logrus.Warnf("Files Removed:%s", outString)
 	}
+
+	logrus.Infof("Successfully validated\n  Upstream: %s\n  Branch: %s\n",
+		configYaml.Validate[0].Url, configYaml.Validate[0].Branch)
 
 }
 
