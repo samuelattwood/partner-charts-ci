@@ -554,9 +554,15 @@ func collectNonStoredVersions(versions repo.ChartVersions, storedVersions repo.C
 		stored := false
 		logrus.Debugf("Checking if version %s is stored\n", version.Version)
 		for _, storedVersion := range storedVersions {
+			strippedStoredVersion := conform.StripPackageVersion(storedVersion.Version)
 			if storedVersion.Version == version.Version {
 				logrus.Debugf("Found version %s\n", storedVersion.Version)
 				stored = true
+				break
+			} else if strippedStoredVersion == version.Version {
+				logrus.Debugf("Found modified version %s\n", storedVersion.Version)
+				stored = true
+				break
 			}
 		}
 		if stored && i == 0 && (strings.ToLower(fetch) == "" || strings.ToLower(fetch) == "latest") {

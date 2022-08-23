@@ -6,6 +6,7 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/samuelattwood/partner-charts-ci/pkg/fetcher"
+	"github.com/sirupsen/logrus"
 
 	"helm.sh/helm/v3/pkg/chart"
 )
@@ -87,6 +88,21 @@ func ApplyChartAnnotations(chartMetadata *chart.Metadata, chartSourceMetadata *f
 	if _, ok := chartMetadata.Annotations["catalog.cattle.io/release-name"]; !ok {
 		chartMetadata.Annotations["catalog.cattle.io/release-name"] = chartSourceMetadata.ReleaseName
 	}
+}
+
+func StripPackageVersion(chartVersion string) string {
+	version, err := semver.Make(chartVersion)
+	if err != nil {
+		logrus.Error(err)
+	}
+
+	if version.Patch >= PatchNumMultiplier {
+		packageVersion := version.Patch % 2
+		patchVersion := (version.Patch - packageVersion) / PatchNumMultiplier
+		version.Patch = patchVersion
+	}
+
+	return version.String()
 }
 
 func GeneratePackageVersion(upstreamChartVersion string, packageVersion *int, version *semver.Version) (string, error) {
