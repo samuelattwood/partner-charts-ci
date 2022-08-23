@@ -40,7 +40,7 @@ git push origin main-source
 ### Using the tool
 If you would like to test your configuration using this tool, simply run the provided script to download the tool. The 'auto' function is what will be run to generate new versions.
 
-The example below downloads the macOS Universal Binary and assumes we have already committed an **upstream.yaml** to **packages/suse/kubewarden-controller/upstream.yaml**
+The example below assumes we have already committed an **upstream.yaml** to **packages/suse/kubewarden-controller/upstream.yaml**
 ```bash
 git clone -b main-source git@github.com:samuelattwood/partner-charts.git
 cd partner-charts
