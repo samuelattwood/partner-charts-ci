@@ -111,7 +111,7 @@ func ListPackages(packageDirectory string, currentPackage string) (map[string]st
 
 func ParseUpstreamYaml(packagePath string) (UpstreamYaml, error) {
 	upstreamYamlPath := filepath.Join(packagePath, UpstreamOptionsFile)
-	logrus.Debugf("attempting to parse %s", upstreamYamlPath)
+	logrus.Debugf("Attempting to parse %s", upstreamYamlPath)
 	upstreamYamlFile, err := os.ReadFile(upstreamYamlPath)
 	upstreamYaml := UpstreamYaml{}
 	if err != nil {

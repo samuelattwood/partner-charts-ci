@@ -38,24 +38,15 @@ git push origin main-source
 ```
 
 ### Using the tool
-If you would like to test your configuration using this tool, simply download the latest release for your architecture. The 'auto' function is what will be run to generate new versions.
-
-Direct Links
-
-[macOS Universal](https://github.com/samuelattwood/partner-charts-ci/releases/latest/download/partner-charts-ci-darwin-universal)
-
-[Linux x86_64](https://github.com/samuelattwood/partner-charts-ci/releases/latest/download/partner-charts-ci-linux-amd64)
-
-[Windows x86_64](https://github.com/samuelattwood/partner-charts-ci/releases/latest/download/partner-charts-ci-windows-amd64)
+If you would like to test your configuration using this tool, simply run the provided script to download the tool. The 'auto' function is what will be run to generate new versions.
 
 The example below downloads the macOS Universal Binary and assumes we have already committed an **upstream.yaml** to **packages/suse/kubewarden-controller/upstream.yaml**
 ```bash
 git clone -b main-source git@github.com:samuelattwood/partner-charts.git
 cd partner-charts
-curl -L -o partner-charts-ci https://github.com/samuelattwood/partner-charts-ci/releases/latest/download/partner-charts-ci-darwin-universal
-chmod +x partner-charts-ci
+scripts/pull-ci-scripts
 export PACKAGE=suse/kubewarden-controller
-./partner-charts-ci auto
+bin/partner-charts-ci auto
 ```
 
 ### Overlay

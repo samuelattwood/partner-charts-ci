@@ -38,6 +38,11 @@ const (
 	configOptionsFile     = "configuration.yaml"
 )
 
+var (
+	Version = "v0.0.0"
+	Commit  = "HEAD"
+)
+
 // PackageWrapper is a representation of relevant package metadata
 type PackageWrapper struct {
 	//Indicator to generate patch files
@@ -1159,6 +1164,7 @@ func main() {
 
 	app := cli.NewApp()
 	app.Name = "partner-charts-ci"
+	app.Version = fmt.Sprintf("%s (%s)", Version, Commit)
 	app.Usage = "Assists in submission and maintenance of partner Helm charts"
 
 	app.Commands = []cli.Command{
