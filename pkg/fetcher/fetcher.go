@@ -56,10 +56,6 @@ type ChartSourceMetadata struct {
 	Versions     repo.ChartVersions
 }
 
-func parseVendor(vendor string) string {
-	return strings.ReplaceAll(strings.ToLower(vendor), " ", "-")
-}
-
 // Constructs Chart Metadata for latest version published to Helm Repository
 func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
 	url := fmt.Sprintf("%s/index.yaml", upstreamYaml.HelmRepoUrl)
@@ -101,14 +97,6 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 	chartSourceMeta.DisplayName = upstreamVersions[0].Metadata.Name
 	chartSourceMeta.Versions = indexYaml.Entries[upstreamYaml.HelmChart]
 
-	if upstreamYaml.Vendor != "" {
-		chartSourceMeta.Vendor = upstreamYaml.Vendor
-	} else {
-		chartSourceMeta.Vendor = chartSourceMeta.Name
-	}
-
-	chartSourceMeta.ParsedVendor = parseVendor(chartSourceMeta.Vendor)
-
 	return chartSourceMeta, nil
 }
 
@@ -135,16 +123,6 @@ func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetad
 	if apiResp.ContentUrl == "" {
 		return chartSourceMeta, fmt.Errorf("ArtifactHub package: %s/%s not found", upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
 	}
-
-	if upstreamYaml.Vendor != "" {
-		chartSourceMeta.Vendor = upstreamYaml.Vendor
-	} else if apiResp.Repository.OrgName != "" {
-		chartSourceMeta.Vendor = apiResp.Repository.OrgName
-	} else {
-		chartSourceMeta.Vendor = apiResp.NormalizedName
-	}
-
-	chartSourceMeta.ParsedVendor = parseVendor(chartSourceMeta.Vendor)
 
 	versionMetadata := chart.Metadata{
 		Name:    apiResp.Name,
@@ -200,6 +178,8 @@ func fetchGitHubRelease(repoUrl string) (string, error) {
 		}
 	}
 
+	logrus.Debugf("Fetching GitHub Release: %s (%s)\n", *latestRelease.Name, releaseCommit)
+
 	return releaseCommit, nil
 }
 
@@ -228,6 +208,7 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 	}
 
 	if upstreamYaml.GitHubRelease {
+		logrus.Debug("Fetching GitHub Release")
 		upstreamCommit, err = fetchGitHubRelease(upstreamYaml.GitRepoUrl)
 		if err != nil {
 			return ChartSourceMetadata{}, err
@@ -261,9 +242,10 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 			return ChartSourceMetadata{}, err
 		}
 	}
+	logrus.Debugf("Git Temp Directory: %s\n", sourcePath)
 	helmChart, err := loader.Load(sourcePath)
 	if err != nil {
-		logrus.Debug(err)
+		return ChartSourceMetadata{}, err
 	}
 
 	version := repo.ChartVersion{
@@ -281,14 +263,6 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 		SubDirectory: upstreamYaml.GitSubDirectory,
 		Versions:     versions,
 	}
-
-	if upstreamYaml.Vendor != "" {
-		chartSourceMeta.Vendor = upstreamYaml.Vendor
-	} else {
-		chartSourceMeta.Vendor = chartSourceMeta.Name
-	}
-
-	chartSourceMeta.ParsedVendor = parseVendor(chartSourceMeta.Vendor)
 
 	err = os.RemoveAll(tempDir)
 	if err != nil {

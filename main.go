@@ -130,6 +130,8 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 			Versions: make(repo.ChartVersions, 1),
 		}
 
+		sourceMetadata.Vendor, sourceMetadata.ParsedVendor = parseVendor("", sourceMetadata.Name, packageWrapper.Path)
+
 		chartVersion := repo.ChartVersion{
 			Metadata: &chart.Metadata{
 				Name: sourceMetadata.Name,
@@ -173,10 +175,14 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 			return false, err
 		}
 
-		packageWrapper.SourceMetadata, err = generateChartSourceMetadata(*packageWrapper.UpstreamYaml)
+		sourceMetadata, err := generateChartSourceMetadata(*packageWrapper.UpstreamYaml)
 		if err != nil {
 			return false, err
 		}
+
+		sourceMetadata.Vendor, sourceMetadata.ParsedVendor = parseVendor(packageWrapper.UpstreamYaml.Vendor, sourceMetadata.Name, packageWrapper.Path)
+
+		packageWrapper.SourceMetadata = sourceMetadata
 
 		if packageWrapper.OnlyLatest {
 			packageWrapper.UpstreamYaml.Fetch = "latest"
@@ -290,6 +296,7 @@ func getRepoRoot() string {
 }
 
 func getRelativePath(packagePath string) string {
+	packagePath = filepath.ToSlash(packagePath)
 	packagesPath := filepath.Join(getRepoRoot(), repositoryPackagesDir)
 	return strings.TrimPrefix(packagePath, packagesPath)
 }
@@ -589,6 +596,7 @@ func collectNonStoredVersions(versions repo.ChartVersions, storedVersions repo.C
 						continue
 					}
 					if semVer.GreaterThan(storedSemVer) {
+						logrus.Debugf("Version: %s > %s\n", semVer.String(), storedSemVer.String())
 						nonStoredVersions = append(nonStoredVersions, version)
 					}
 				} else {
@@ -606,8 +614,25 @@ func collectNonStoredVersions(versions repo.ChartVersions, storedVersions repo.C
 	return nonStoredVersions
 }
 
+func stripPreRelease(versions repo.ChartVersions) repo.ChartVersions {
+	strippedVersions := make(repo.ChartVersions, 0)
+	for _, version := range versions {
+		semVer, err := semver.NewVersion(version.Version)
+		if err != nil {
+			logrus.Error(err)
+			continue
+		}
+		if semVer.Prerelease() == "" {
+			strippedVersions = append(strippedVersions, version)
+		}
+	}
+
+	return strippedVersions
+}
+
 func filterVersions(upstreamVersions repo.ChartVersions, fetch string, tracked []string) (repo.ChartVersions, error) {
 	logrus.Debugf("Filtering versions for %s\n", upstreamVersions[0].Name)
+	upstreamVersions = stripPreRelease(upstreamVersions)
 	filteredVersions := make(repo.ChartVersions, 0)
 	allStoredVersions, err := getStoredVersions(upstreamVersions[0].Name)
 	if len(tracked) > 0 {
@@ -635,6 +660,25 @@ func generateChartSourceMetadata(upstreamYaml parse.UpstreamYaml) (*fetcher.Char
 	}
 
 	return &sourceMetadata, nil
+}
+
+func parseVendor(upstreamYamlVendor, chartName, packagePath string) (string, string) {
+	var vendor string
+	packagePath = filepath.ToSlash(packagePath)
+	packageRelativePath := getRelativePath(packagePath)
+	vendorPath := strings.TrimPrefix(filepath.Dir(packageRelativePath), "/")
+
+	if upstreamYamlVendor != "" {
+		vendor = upstreamYamlVendor
+	} else if len(vendorPath) > 0 {
+		vendor = vendorPath
+	} else {
+		vendor = chartName
+	}
+
+	parsedVendor := strings.ReplaceAll(strings.ToLower(vendor), " ", "-")
+
+	return vendor, parsedVendor
 }
 
 // Prepares and standardizes chart, then returns loaded chart object
