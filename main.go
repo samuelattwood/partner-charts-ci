@@ -75,7 +75,7 @@ func (packageWrapper PackageWrapper) patch() error {
 			packageWrapper.UpstreamYaml.PackageVersion,
 			packageWrapper.SourceMetadata.Commit,
 			packageWrapper.SourceMetadata.SubDirectory,
-			packageWrapper.SourceMetadata.Versions[0].URLs[0],
+			packageWrapper.FetchVersions[0].URLs[0],
 			true,
 		)
 		if err != nil {
@@ -100,75 +100,84 @@ func (packageWrapper PackageWrapper) patch() error {
 	return nil
 }
 
+func (packageWrapper *PackageWrapper) populateManual() (bool, error) {
+	//Preparing the chart to pull the actual release-name and version
+	err := prepareManualPackage(packageWrapper.Path)
+	if err != nil {
+		return false, err
+	}
+
+	pkg, err := generatePackage(packageWrapper.Path)
+	if err != nil {
+		return false, err
+	}
+
+	chartPath := path.Join(packageWrapper.Path, repositoryChartsDir)
+	helmChart, err := loader.Load(chartPath)
+	if err != nil {
+		return false, err
+	}
+
+	sourceMetadata := fetcher.ChartSourceMetadata{
+		Vendor:   path.Base(packageWrapper.Path),
+		Name:     helmChart.Name(),
+		Source:   "direct",
+		Versions: make(repo.ChartVersions, 1),
+	}
+
+	sourceMetadata.Vendor, sourceMetadata.ParsedVendor = parseVendor("", sourceMetadata.Name, packageWrapper.Path)
+
+	chartVersion := repo.ChartVersion{
+		Metadata: &chart.Metadata{
+			Name: sourceMetadata.Name,
+		},
+		URLs: make([]string, 1),
+	}
+
+	chartVersion.URLs[0] = pkg.Upstream.GetOptions().URL
+	chartVersion.Version, err = conform.GeneratePackageVersion(
+		helmChart.Metadata.Version,
+		pkg.PackageVersion,
+		pkg.Version)
+	if err != nil {
+		return false, err
+	}
+
+	packageWrapper.SourceMetadata = &sourceMetadata
+	packageWrapper.SourceMetadata.Versions[0] = &chartVersion
+
+	packageWrapper.FetchVersions, err = filterVersions(
+		packageWrapper.SourceMetadata.Versions,
+		"",
+		nil)
+	if err != nil {
+		return false, err
+	}
+
+	packageWrapper.LatestStored, err = getLatestStoredVersion(helmChart.Name())
+	if err != nil {
+		return false, err
+	}
+
+	err = cleanPackage(packageWrapper.Path, true)
+	if err != nil {
+		return false, err
+	}
+	if len(packageWrapper.FetchVersions) == 0 {
+		return false, nil
+	}
+
+	return true, nil
+
+}
+
 // Populates package wrapper with relevant data from upstream, checks for updates,
 // writes out package yaml file, and generates package object
 // Returns true if newer package version is available
 func (packageWrapper *PackageWrapper) populate() (bool, error) {
 	var err error
 	if packageWrapper.ManualUpdate {
-		//Preparing the chart to pull the actual release-name and version
-		err := prepareManualPackage(packageWrapper.Path)
-		if err != nil {
-			return false, err
-		}
-
-		pkg, err := generatePackage(packageWrapper.Path)
-		if err != nil {
-			return false, err
-		}
-
-		chartPath := path.Join(packageWrapper.Path, repositoryChartsDir)
-		helmChart, err := loader.Load(chartPath)
-		if err != nil {
-			return false, err
-		}
-
-		sourceMetadata := fetcher.ChartSourceMetadata{
-			Vendor:   path.Base(packageWrapper.Path),
-			Name:     helmChart.Name(),
-			Source:   "direct",
-			Versions: make(repo.ChartVersions, 1),
-		}
-
-		sourceMetadata.Vendor, sourceMetadata.ParsedVendor = parseVendor("", sourceMetadata.Name, packageWrapper.Path)
-
-		chartVersion := repo.ChartVersion{
-			Metadata: &chart.Metadata{
-				Name: sourceMetadata.Name,
-			},
-			URLs: make([]string, 1),
-		}
-
-		chartVersion.URLs[0] = pkg.Upstream.GetOptions().URL
-		chartVersion.Version, err = conform.GeneratePackageVersion(
-			helmChart.Metadata.Version,
-			pkg.PackageVersion,
-			pkg.Version)
-		if err != nil {
-			return false, err
-		}
-
-		packageWrapper.SourceMetadata = &sourceMetadata
-		packageWrapper.SourceMetadata.Versions[0] = &chartVersion
-
-		packageWrapper.FetchVersions, err = filterVersions(
-			packageWrapper.SourceMetadata.Versions,
-			"",
-			nil)
-		if err != nil {
-			return false, err
-		}
-
-		packageWrapper.LatestStored, err = getLatestStoredVersion(helmChart.Name())
-		if err != nil {
-			return false, err
-		}
-
-		err = cleanPackage(packageWrapper.Path, true)
-		if err != nil {
-			return false, err
-		}
-
+		return packageWrapper.populateManual()
 	} else {
 		packageWrapper.UpstreamYaml, err = parseUpstream(packageWrapper.Path)
 		if err != nil {
@@ -186,7 +195,9 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 
 		if packageWrapper.OnlyLatest {
 			packageWrapper.UpstreamYaml.Fetch = "latest"
-			packageWrapper.UpstreamYaml.TrackVersions = make([]string, 0)
+			if packageWrapper.UpstreamYaml.TrackVersions != nil {
+				packageWrapper.UpstreamYaml.TrackVersions = []string{packageWrapper.UpstreamYaml.TrackVersions[0]}
+			}
 		}
 
 		packageWrapper.FetchVersions, err = filterVersions(
@@ -211,13 +222,11 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 			packageWrapper.SourceMetadata.ReleaseName = packageWrapper.SourceMetadata.Name
 		}
 	}
-
 	if len(packageWrapper.FetchVersions) == 0 {
 		return false, nil
 	}
 
 	return true, nil
-
 }
 
 func (packageWrapper PackageWrapper) hide() error {
@@ -410,7 +419,6 @@ func cleanPackage(packagePath string, manualUpdate bool) error {
 	packageName := strings.TrimPrefix(getRelativePath(packagePath), "/")
 	logrus.Debugf("Cleaning package %s", packageName)
 	logrus.Debugf("Generating package yaml if it does not exist")
-	//packageYaml, err = generatePackageYaml(packageWrapper, *packageWrapper.SourceMetadata.Versions[0], false)
 	if !manualUpdate {
 		packageYaml, err = writePackageYaml(
 			packagePath,
@@ -469,27 +477,26 @@ func prepareManualPackage(packagePath string) error {
 	return nil
 }
 
-// Prepares package for modification via patch
+// Prepares package for modification via patch and overlay
 func preparePackage(packagePath string, sourceMetadata *fetcher.ChartSourceMetadata, chartVersion *repo.ChartVersion) error {
-	logrus.Debugf("Generated package from %s", packagePath)
-	pkg, err := generatePackage(packagePath)
-	if err != nil {
-		logrus.Error(err)
-	}
+	var err error
+	logrus.Debugf("Preparing package from %s", packagePath)
 
 	chartVersion.Metadata.Version, err = conform.GeneratePackageVersion(
-		chartVersion.Metadata.Version, pkg.PackageVersion, pkg.Version)
+		chartVersion.Metadata.Version, nil, nil)
 	if err != nil {
-		logrus.Error(err)
+		return err
 	}
 
-	conform.LinkOverlayFiles(packagePath)
-
-	err = pkg.Prepare()
+	chart, err := fetcher.LoadChartFromUrl(chartVersion.URLs[0])
 	if err != nil {
-		logrus.Error("Unable to prepare package. Cleaning up and skipping...")
-		cleanPackage(packagePath, false)
 		return err
+	}
+
+	exportPath := path.Join(packagePath, repositoryChartsDir)
+	err = conform.ExportChartDirectory(chart, exportPath)
+	if err != nil {
+		logrus.Error(err)
 	}
 
 	patchOrigPath := path.Join(packagePath, repositoryChartsDir, "Chart.yaml.orig")
@@ -697,6 +704,11 @@ func initializeChart(packagePath string, sourceMetadata fetcher.ChartSourceMetad
 	chartDirectoryPath := path.Join(packagePath, repositoryChartsDir)
 	conform.StandardizeChartDirectory(chartDirectoryPath, "")
 
+	err = conform.ApplyOverlayFiles(packagePath)
+	if err != nil {
+		return nil, err
+	}
+
 	helmChart, err := loader.Load(chartDirectoryPath)
 	if err != nil {
 		return nil, err
@@ -704,29 +716,19 @@ func initializeChart(packagePath string, sourceMetadata fetcher.ChartSourceMetad
 
 	helmChart.Metadata.Version = chartVersion.Version
 
+	for _, d := range helmChart.Metadata.Dependencies {
+		d.Repository = fmt.Sprintf("file://./charts/%s", d.Name)
+	}
+
 	return helmChart, nil
 }
 
 // Mutates chart with necessary alterations for repository
 func conformPackage(packageWrapper PackageWrapper) error {
 	var err error
-	var packageYaml *parse.PackageYaml
 	logrus.Debugf("Conforming package from %s\n", packageWrapper.Path)
 	for _, chartVersion := range packageWrapper.FetchVersions {
 		logrus.Debugf("Conforming package %s (%s)\n", chartVersion.Name, chartVersion.Version)
-		if !packageWrapper.ManualUpdate {
-			packageYaml, err = writePackageYaml(
-				packageWrapper.Path,
-				packageWrapper.UpstreamYaml.PackageVersion,
-				packageWrapper.SourceMetadata.Commit,
-				packageWrapper.SourceMetadata.SubDirectory,
-				chartVersion.URLs[0],
-				true,
-			)
-			if err != nil {
-				return err
-			}
-		}
 		helmChart, err := initializeChart(
 			packageWrapper.Path,
 			*packageWrapper.SourceMetadata,
@@ -740,6 +742,19 @@ func conformPackage(packageWrapper PackageWrapper) error {
 		if packageWrapper.ManualUpdate {
 			packageWrapper.SourceMetadata.Name = helmChart.Name()
 			chartVersion.Version = helmChart.Metadata.Version
+			pkg, err := generatePackage(packageWrapper.Path)
+			if err != nil {
+				return err
+			}
+
+			if packageWrapper.GenPatch {
+				err = pkg.GeneratePatch()
+				if err != nil {
+					return err
+				}
+
+			}
+
 		} else {
 			conform.OverlayChartMetadata(helmChart.Metadata, packageWrapper.UpstreamYaml.ChartYaml)
 			conform.ApplyChartAnnotations(helmChart.Metadata, packageWrapper.SourceMetadata)
@@ -751,38 +766,21 @@ func conformPackage(packageWrapper PackageWrapper) error {
 			} else if packageWrapper.UpstreamYaml.ChartYaml.KubeVersion != "" {
 				helmChart.Metadata.Annotations["catalog.cattle.io/kube-version"] = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
 			}
+
 		}
 
-		pkg, err := generatePackage(packageWrapper.Path)
-		if err != nil {
-			return err
-		}
-
-		if packageWrapper.GenPatch {
-			err = pkg.GeneratePatch()
-			if err != nil {
-				return err
-			}
-
+		if packageWrapper.Save {
 			err = cleanPackage(packageWrapper.Path, packageWrapper.ManualUpdate)
 			if err != nil {
 				logrus.Debug(err)
 			}
 
-		}
-
-		conform.RemoveOverlayFiles(packageWrapper.Path)
-
-		if packageWrapper.Save {
 			err = saveChart(helmChart, packageWrapper.SourceMetadata)
 			if err != nil {
 				return err
 			}
 		}
 
-		if !packageWrapper.ManualUpdate {
-			packageYaml.Remove()
-		}
 	}
 
 	return err
@@ -806,6 +804,14 @@ func saveChart(helmChart *chart.Chart, sourceMetadata *fetcher.ChartSourceMetada
 	err := conform.ExportChartAsset(helmChart, assetsPath)
 	if err != nil {
 		return err
+	}
+
+	assetFile := fmt.Sprintf("%s-%s.tgz", helmChart.Name(), helmChart.Metadata.Version)
+	assetFile = path.Join(assetsPath, assetFile)
+
+	err = conform.Gunzip(assetFile, chartsPath)
+	if err != nil {
+		logrus.Error(err)
 	}
 
 	logrus.Debugf("Exporting chart to %s\n", chartsPath)

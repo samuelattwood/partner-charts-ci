@@ -1,7 +1,10 @@
 package conform
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +49,59 @@ func GetFileList(searchPath string, relative bool) ([]string, []string, error) {
 	}
 
 	return dirList, fileList, nil
+}
+
+func ApplyOverlayFiles(packagePath string) error {
+	overlayPath := filepath.Join(packagePath, overlayDir)
+	if _, err := os.Stat(overlayPath); !os.IsNotExist(err) {
+		dirList, fileList, err := GetFileList(overlayPath, true)
+		if err != nil {
+			return err
+		}
+		if len(dirList) == 0 {
+			dirList = append(dirList, "")
+		}
+		for _, dir := range dirList {
+			generatedPath := filepath.Join(packagePath, "charts", dir)
+			if _, err := os.Stat(generatedPath); os.IsNotExist(err) {
+				os.MkdirAll(generatedPath, 0755)
+			}
+		}
+
+		for _, filePath := range fileList {
+			srcPath := filepath.Join(overlayPath, filePath)
+			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+				return err
+			}
+
+			srcFile, err := os.Open(srcPath)
+			if err != nil {
+				return err
+			}
+			defer srcFile.Close()
+
+			generatedPath := filepath.Join(packagePath, "charts", filePath)
+			if _, err := os.Stat(generatedPath); !os.IsNotExist(err) {
+				err = os.Remove(generatedPath)
+				if err != nil {
+					return err
+				}
+			}
+			dstFile, err := os.Create(generatedPath)
+			if err != nil {
+				return err
+			}
+			defer dstFile.Close()
+
+			if _, err = io.Copy(dstFile, srcFile); err != nil {
+				return err
+			}
+		}
+
+	}
+
+	return nil
+
 }
 
 func LinkOverlayFiles(packagePath string) error {
@@ -143,9 +199,15 @@ func ExportChartDirectory(chart *chart.Chart, targetPath string) error {
 		return err
 	}
 
-	err = chartutil.SaveDir(chart, tempDir)
+	tgz, err := chartutil.Save(chart, tempDir)
 	if err != nil {
-		err = fmt.Errorf("unable to save chart to %s", tempDir)
+		err = fmt.Errorf("unable to save chart archive to %s", tempDir)
+		return err
+	}
+
+	chartOutputPath := filepath.Join(tempDir, chart.Name())
+
+	if err = Gunzip(tgz, chartOutputPath); err != nil {
 		return err
 	}
 
@@ -153,12 +215,10 @@ func ExportChartDirectory(chart *chart.Chart, targetPath string) error {
 		os.RemoveAll(targetPath)
 	}
 
-	err = os.MkdirAll(filepath.Dir(targetPath), 0755)
-	if err != nil {
+	if err = os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		return err
 	}
 
-	chartOutputPath := filepath.Join(tempDir, chart.Metadata.Name)
 	err = os.Rename(chartOutputPath, targetPath)
 	if err != nil {
 		return err
@@ -167,6 +227,95 @@ func ExportChartDirectory(chart *chart.Chart, targetPath string) error {
 	err = os.RemoveAll(tempDir)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func ExportDependenciesToDirectory(chart *chart.Chart, targetPath string) error {
+	for _, c := range chart.Dependencies() {
+		logrus.Debugf("Saving dependency %s to %s\n", c.Name(), targetPath)
+		err := chartutil.SaveDir(c, targetPath)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func stripRootPath(path string) string {
+	newPath := filepath.ToSlash(path)
+	rootPath := strings.Split(newPath, "/")[0]
+	newPath = strings.TrimPrefix(newPath, "/")
+	newPath = strings.TrimPrefix(newPath, rootPath)
+	newPath = strings.TrimPrefix(newPath, "/")
+
+	return filepath.FromSlash(newPath)
+}
+
+func Gunzip(path string, outPath string) error {
+	if !strings.HasSuffix(path, ".tgz") && !strings.HasPrefix(path, ".gz") {
+		return fmt.Errorf("Expecting file of type .gz or .tgz")
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("%s does not exist or is inaccessible", path)
+	}
+
+	gzipFile, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer gzipFile.Close()
+
+	gzipReader, err := gzip.NewReader(gzipFile)
+	if err != nil {
+		return err
+	}
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+
+	for {
+		h, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		filePath := filepath.Join(outPath, stripRootPath(h.Name))
+		parentPath := filepath.Dir(filePath)
+		if _, err := os.Stat(parentPath); os.IsNotExist(err) {
+			if err = os.MkdirAll(parentPath, 0755); err != nil {
+				return err
+			}
+		}
+
+		if h.Typeflag == tar.TypeDir {
+			if err = os.MkdirAll(filePath, os.FileMode(h.Mode)); err != nil {
+				return err
+			}
+		} else if h.Typeflag == tar.TypeReg {
+			f, err := os.Create(filePath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			if _, err = io.Copy(f, tarReader); err != nil {
+				return err
+			}
+
+			if err = os.Chmod(filePath, os.FileMode(h.Mode)); err != nil {
+				return err
+			}
+		} else if h.Name != "pax_global_header" {
+			return fmt.Errorf("unknown file type for %s", h.Name)
+		}
+
 	}
 
 	return nil

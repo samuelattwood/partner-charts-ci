@@ -284,3 +284,22 @@ func FetchUpstream(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error)
 		return ChartSourceMetadata{}, err
 	}
 }
+
+func LoadChartFromUrl(url string) (*chart.Chart, error) {
+	logrus.Debugf("Loading chart from %s\n", url)
+	resp, err := http.Get(url)
+	if err != nil {
+		logrus.Errorf("Unable to fetch url %s", url)
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	chart, err := loader.LoadArchive(resp.Body)
+	if err != nil {
+		logrus.Error(err)
+		return nil, err
+	}
+
+	return chart, nil
+}
