@@ -55,6 +55,8 @@ type PackageWrapper struct {
 	ManualUpdate bool
 	//Force only pulling the latest version
 	OnlyLatest bool
+	//Set dependency chart repository to local file
+	RemoteDependencies bool
 	//Indicator to write chart to disk
 	Save bool
 	//SourceMetadata represents metadata fetched from the upstream repository
@@ -221,6 +223,8 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 		} else {
 			packageWrapper.SourceMetadata.ReleaseName = packageWrapper.SourceMetadata.Name
 		}
+
+		packageWrapper.RemoteDependencies = packageWrapper.UpstreamYaml.RemoteDependencies
 	}
 	if len(packageWrapper.FetchVersions) == 0 {
 		return false, nil
@@ -716,10 +720,6 @@ func initializeChart(packagePath string, sourceMetadata fetcher.ChartSourceMetad
 
 	helmChart.Metadata.Version = chartVersion.Version
 
-	for _, d := range helmChart.Metadata.Dependencies {
-		d.Repository = fmt.Sprintf("file://./charts/%s", d.Name)
-	}
-
 	return helmChart, nil
 }
 
@@ -737,6 +737,12 @@ func conformPackage(packageWrapper PackageWrapper) error {
 		)
 		if err != nil {
 			return err
+		}
+
+		if !packageWrapper.RemoteDependencies {
+			for _, d := range helmChart.Metadata.Dependencies {
+				d.Repository = fmt.Sprintf("file://./charts/%s", d.Name)
+			}
 		}
 
 		if packageWrapper.ManualUpdate {

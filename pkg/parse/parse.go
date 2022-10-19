@@ -27,21 +27,22 @@ type PackageYaml struct {
 }
 
 type UpstreamYaml struct {
-	AHPackageName   string         `json:"ArtifactHubPackage"`
-	AHRepoName      string         `json:"ArtifactHubRepo"`
-	ChartYaml       chart.Metadata `json:"ChartMetadata"`
-	DisplayName     string         `json:"DisplayName"`
-	Fetch           string         `json:"Fetch"`
-	GitBranch       string         `json:"GitBranch"`
-	GitHubRelease   bool           `json:"GitHubRelease"`
-	GitRepoUrl      string         `json:"GitRepo"`
-	GitSubDirectory string         `json:"GitSubdirectory"`
-	HelmChart       string         `json:"HelmChart"`
-	HelmRepoUrl     string         `json:"HelmRepo"`
-	PackageVersion  int            `json:"PackageVersion"`
-	TrackVersions   []string       `json:"TrackVersions"`
-	ReleaseName     string         `json:"ReleaseName"`
-	Vendor          string         `json:"Vendor"`
+	AHPackageName      string         `json:"ArtifactHubPackage"`
+	AHRepoName         string         `json:"ArtifactHubRepo"`
+	ChartYaml          chart.Metadata `json:"ChartMetadata"`
+	DisplayName        string         `json:"DisplayName"`
+	Fetch              string         `json:"Fetch"`
+	GitBranch          string         `json:"GitBranch"`
+	GitHubRelease      bool           `json:"GitHubRelease"`
+	GitRepoUrl         string         `json:"GitRepo"`
+	GitSubDirectory    string         `json:"GitSubdirectory"`
+	HelmChart          string         `json:"HelmChart"`
+	HelmRepoUrl        string         `json:"HelmRepo"`
+	PackageVersion     int            `json:"PackageVersion"`
+	RemoteDependencies bool           `json:"RemoteDependencies"`
+	TrackVersions      []string       `json:"TrackVersions"`
+	ReleaseName        string         `json:"ReleaseName"`
+	Vendor             string         `json:"Vendor"`
 }
 
 func (packageYaml PackageYaml) Write(overWrite bool) error {
