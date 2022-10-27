@@ -3,8 +3,9 @@ package conform
 import (
 	"fmt"
 	"math"
+	"strings"
 
-	"github.com/blang/semver"
+	"github.com/Masterminds/semver/v3"
 	"github.com/samuelattwood/partner-charts-ci/pkg/fetcher"
 	"github.com/sirupsen/logrus"
 
@@ -91,26 +92,31 @@ func ApplyChartAnnotations(chartMetadata *chart.Metadata, chartSourceMetadata *f
 }
 
 func StripPackageVersion(chartVersion string) string {
-	version, err := semver.Make(chartVersion)
+	version, err := semver.NewVersion(chartVersion)
 	if err != nil {
 		logrus.Error(err)
 	}
 
-	if version.Patch >= PatchNumMultiplier {
-		packageVersion := version.Patch % 2
-		patchVersion := (version.Patch - packageVersion) / PatchNumMultiplier
-		version.Patch = patchVersion
+	if version.Patch() >= PatchNumMultiplier {
+		packageVersion := version.Patch() % 2
+		patchVersion := (version.Patch() - packageVersion) / PatchNumMultiplier
+		split := strings.Split(version.String(), ".")
+		split[2] = fmt.Sprintf("%d", patchVersion)
+		version, err = semver.NewVersion(strings.Join(split, "."))
+		if err != nil {
+			logrus.Error(err)
+		}
 	}
 
 	return version.String()
 }
 
-func GeneratePackageVersion(upstreamChartVersion string, packageVersion *int, version *semver.Version) (string, error) {
-	if version != nil {
-		return version.String(), nil
+func GeneratePackageVersion(upstreamChartVersion string, packageVersion *int, version string) (string, error) {
+	if version != "" {
+		return version, nil
 	}
 	if packageVersion != nil {
-		chartVersion, err := semver.Make(upstreamChartVersion)
+		chartVersion, err := semver.NewVersion(upstreamChartVersion)
 		if err != nil {
 			return "", err
 		}
@@ -119,12 +125,19 @@ func GeneratePackageVersion(upstreamChartVersion string, packageVersion *int, ve
 			return "", fmt.Errorf("package version %d is greater than maximum of %d", *packageVersion, MaxPatchNum)
 		}
 
-		chartVersion.Patch = PatchNumMultiplier*chartVersion.Patch + uint64(*packageVersion)
+		patchVersion := PatchNumMultiplier*chartVersion.Patch() + uint64(*packageVersion)
+
+		split := strings.Split(chartVersion.String(), ".")
+		split[2] = fmt.Sprintf("%d", patchVersion)
+		chartVersion, err = semver.NewVersion(strings.Join(split, "."))
+		if err != nil {
+			return "", err
+		}
 
 		return chartVersion.String(), nil
 	}
 
-	chartVersion, err := semver.Make(upstreamChartVersion)
+	chartVersion, err := semver.NewVersion(upstreamChartVersion)
 	if err != nil {
 		return "", err
 	}

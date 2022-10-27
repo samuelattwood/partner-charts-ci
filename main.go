@@ -53,6 +53,8 @@ type PackageWrapper struct {
 	LatestStored repo.ChartVersion
 	//ManualUpdate evaluates true if package does not provide upstream yaml for automated update
 	ManualUpdate bool
+	//Untracked upstream versions newer than latest tracked
+	NewerUntracked []*semver.Version
 	//Force only pulling the latest version
 	OnlyLatest bool
 	//Set dependency chart repository to local file
@@ -136,11 +138,16 @@ func (packageWrapper *PackageWrapper) populateManual() (bool, error) {
 		URLs: make([]string, 1),
 	}
 
+	fixedVersion := ""
+	if pkg.Version != nil {
+		fixedVersion = pkg.Version.String()
+	}
+
 	chartVersion.URLs[0] = pkg.Upstream.GetOptions().URL
 	chartVersion.Version, err = conform.GeneratePackageVersion(
 		helmChart.Metadata.Version,
 		pkg.PackageVersion,
-		pkg.Version)
+		fixedVersion)
 	if err != nil {
 		return false, err
 	}
@@ -389,13 +396,13 @@ func commitChanges(updatedList []PackageWrapper) error {
 
 	wt.Add(indexFile)
 
-	commitMessage := "CI Updated Charts"
+	commitMessage := "Charts CI"
 	for _, packageWrapper := range updatedList {
 		lineItem := fmt.Sprintf("  %s/%s:\n",
 			packageWrapper.SourceMetadata.ParsedVendor,
 			packageWrapper.SourceMetadata.Name)
 		for _, version := range packageWrapper.FetchVersions {
-			lineItem += fmt.Sprintf("    - %s\n", version.Version)
+			lineItem += fmt.Sprintf("    %s\n", version.Version)
 		}
 		if packageWrapper.LatestStored.Digest == "" {
 			additions += lineItem
@@ -487,7 +494,7 @@ func preparePackage(packagePath string, sourceMetadata *fetcher.ChartSourceMetad
 	logrus.Debugf("Preparing package from %s", packagePath)
 
 	chartVersion.Metadata.Version, err = conform.GeneratePackageVersion(
-		chartVersion.Metadata.Version, nil, nil)
+		chartVersion.Metadata.Version, nil, "")
 	if err != nil {
 		return err
 	}
@@ -559,10 +566,12 @@ func collectTrackedVersions(upstreamVersions repo.ChartVersions, tracked []strin
 				logrus.Errorf("%s: %s", version.Version, err)
 				continue
 			}
-			logrus.Debugf("Comparing upstream version %s (%s) to stored version %s\n", version.Name, version.Version, trackedVersion)
-			if trackedSemVer.Major() == semVer.Major() && trackedSemVer.Minor() == semVer.Minor() {
+			logrus.Debugf("Comparing upstream version %s (%s) to tracked version %s\n", version.Name, version.Version, trackedVersion)
+			if semVer.Major() == trackedSemVer.Major() && semVer.Minor() == trackedSemVer.Minor() {
 				logrus.Debugf("Appending version %s tracking %s\n", version.Version, trackedVersion)
 				versionList = append(versionList, version)
+			} else if semVer.Major() < trackedSemVer.Major() || (semVer.Major() == trackedSemVer.Major() && semVer.Minor() < trackedSemVer.Minor()) {
+				break
 			}
 		}
 		trackedVersions[trackedVersion] = versionList
@@ -574,15 +583,19 @@ func collectTrackedVersions(upstreamVersions repo.ChartVersions, tracked []strin
 func collectNonStoredVersions(versions repo.ChartVersions, storedVersions repo.ChartVersions, fetch string) repo.ChartVersions {
 	nonStoredVersions := make(repo.ChartVersions, 0)
 	for i, version := range versions {
+		parsedVersion, err := semver.NewVersion(version.Version)
+		if err != nil {
+			logrus.Error(err)
+		}
 		stored := false
 		logrus.Debugf("Checking if version %s is stored\n", version.Version)
 		for _, storedVersion := range storedVersions {
 			strippedStoredVersion := conform.StripPackageVersion(storedVersion.Version)
-			if storedVersion.Version == version.Version {
+			if storedVersion.Version == parsedVersion.String() {
 				logrus.Debugf("Found version %s\n", storedVersion.Version)
 				stored = true
 				break
-			} else if strippedStoredVersion == version.Version {
+			} else if strippedStoredVersion == parsedVersion.String() {
 				logrus.Debugf("Found modified version %s\n", storedVersion.Version)
 				stored = true
 				break
@@ -641,9 +654,41 @@ func stripPreRelease(versions repo.ChartVersions) repo.ChartVersions {
 	return strippedVersions
 }
 
+func checkNewerUntracked(tracked []string, upstreamVersions repo.ChartVersions) []string {
+	newerUntracked := make([]string, 0)
+	latestTracked := getLatestTracked(tracked)
+	logrus.Debugf("Tracked Versions: %s\n", tracked)
+	logrus.Debugf("Checking for versions newer than latest tracked %s\n", latestTracked)
+	if len(tracked) == 0 {
+		return newerUntracked
+	}
+	for _, upstreamVersion := range upstreamVersions {
+		semVer, err := semver.NewVersion(upstreamVersion.Version)
+		if err != nil {
+			logrus.Error(err)
+		}
+		if semVer.Major() > latestTracked.Major() || (semVer.Major() == latestTracked.Major() && semVer.Minor() > latestTracked.Minor()) {
+			logrus.Debugf("Found version %s newer than latest tracked %s", semVer.String(), latestTracked.String())
+			newerUntracked = append(newerUntracked, semVer.String())
+		} else if semVer.Major() == latestTracked.Major() && semVer.Minor() == latestTracked.Minor() {
+			break
+		}
+	}
+
+	return newerUntracked
+
+}
+
 func filterVersions(upstreamVersions repo.ChartVersions, fetch string, tracked []string) (repo.ChartVersions, error) {
 	logrus.Debugf("Filtering versions for %s\n", upstreamVersions[0].Name)
 	upstreamVersions = stripPreRelease(upstreamVersions)
+	if len(tracked) > 0 {
+		if newerUntracked := checkNewerUntracked(tracked, upstreamVersions); len(newerUntracked) > 0 {
+			logrus.Warnf("Newer untracked version available: %s (%s)", upstreamVersions[0].Name, strings.Join(newerUntracked, ", "))
+		} else {
+			logrus.Debug("No newer untracked versions found")
+		}
+	}
 	filteredVersions := make(repo.ChartVersions, 0)
 	allStoredVersions, err := getStoredVersions(upstreamVersions[0].Name)
 	if len(tracked) > 0 {
@@ -674,10 +719,14 @@ func generateChartSourceMetadata(upstreamYaml parse.UpstreamYaml) (*fetcher.Char
 }
 
 func parseVendor(upstreamYamlVendor, chartName, packagePath string) (string, string) {
-	var vendor string
+	var vendor, vendorPath string
 	packagePath = filepath.ToSlash(packagePath)
 	packageRelativePath := getRelativePath(packagePath)
-	vendorPath := strings.TrimPrefix(filepath.Dir(packageRelativePath), "/")
+	if len(strings.Split(packageRelativePath, "/")) > 2 {
+		vendorPath = strings.TrimPrefix(filepath.Dir(packageRelativePath), "/")
+	} else {
+		vendorPath = strings.TrimPrefix(packageRelativePath, "/")
+	}
 
 	if upstreamYamlVendor != "" {
 		vendor = upstreamYamlVendor
@@ -690,6 +739,12 @@ func parseVendor(upstreamYamlVendor, chartName, packagePath string) (string, str
 	parsedVendor := strings.ReplaceAll(strings.ToLower(vendor), " ", "-")
 
 	return vendor, parsedVendor
+}
+
+func annotateChart(helmChart *chart.Chart, annotation, value string) {
+	if _, ok := helmChart.Metadata.Annotations[annotation]; !ok {
+		helmChart.Metadata.Annotations[annotation] = value
+	}
 }
 
 // Prepares and standardizes chart, then returns loaded chart object
@@ -764,13 +819,16 @@ func conformPackage(packageWrapper PackageWrapper) error {
 		} else {
 			conform.OverlayChartMetadata(helmChart.Metadata, packageWrapper.UpstreamYaml.ChartYaml)
 			conform.ApplyChartAnnotations(helmChart.Metadata, packageWrapper.SourceMetadata)
+			if packageWrapper.UpstreamYaml.Namespace != "" {
+				annotateChart(helmChart, "catalog.cattle.io/namespace", packageWrapper.UpstreamYaml.Namespace)
+			}
 			if helmChart.Metadata.KubeVersion != "" && packageWrapper.UpstreamYaml.ChartYaml.KubeVersion != "" {
-				helmChart.Metadata.Annotations["catalog.cattle.io/kube-version"] = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
+				annotateChart(helmChart, "catalog.cattle.io/kube-version", packageWrapper.UpstreamYaml.ChartYaml.KubeVersion)
 				helmChart.Metadata.KubeVersion = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
 			} else if helmChart.Metadata.KubeVersion != "" {
-				helmChart.Metadata.Annotations["catalog.cattle.io/kube-version"] = helmChart.Metadata.KubeVersion
+				annotateChart(helmChart, "catalog.cattle.io/kube-version", helmChart.Metadata.KubeVersion)
 			} else if packageWrapper.UpstreamYaml.ChartYaml.KubeVersion != "" {
-				helmChart.Metadata.Annotations["catalog.cattle.io/kube-version"] = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
+				annotateChart(helmChart, "catalog.cattle.io/kube-version", packageWrapper.UpstreamYaml.ChartYaml.KubeVersion)
 			}
 
 		}
@@ -827,6 +885,21 @@ func saveChart(helmChart *chart.Chart, sourceMetadata *fetcher.ChartSourceMetada
 	}
 
 	return nil
+}
+
+func getLatestTracked(tracked []string) *semver.Version {
+	var latestTracked *semver.Version
+	for _, version := range tracked {
+		semVer, err := semver.NewVersion(version)
+		if err != nil {
+			logrus.Error(err)
+		}
+		if latestTracked == nil || semVer.GreaterThan(latestTracked) {
+			latestTracked = semVer
+		}
+	}
+
+	return latestTracked
 }
 
 func getStoredVersions(chartName string) (repo.ChartVersions, error) {
@@ -973,7 +1046,7 @@ func populatePackages(onlyUpdates bool, onlyLatest bool, print bool) ([]PackageW
 			continue
 		}
 		if print {
-			logrus.Infof("Parsing %s\n", packageWrapper.SourceMetadata.Name)
+			logrus.Infof("Parsed %s\n", packageWrapper.SourceMetadata.Name)
 			if len(packageWrapper.FetchVersions) == 0 {
 				logrus.Infof("%s/%s is up-to-date\n",
 					packageWrapper.SourceMetadata.Vendor, packageWrapper.SourceMetadata.Name)

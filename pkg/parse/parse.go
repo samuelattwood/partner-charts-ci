@@ -38,6 +38,7 @@ type UpstreamYaml struct {
 	GitSubDirectory    string         `json:"GitSubdirectory"`
 	HelmChart          string         `json:"HelmChart"`
 	HelmRepoUrl        string         `json:"HelmRepo"`
+	Namespace          string         `json:"Namespace"`
 	PackageVersion     int            `json:"PackageVersion"`
 	RemoteDependencies bool           `json:"RemoteDependencies"`
 	TrackVersions      []string       `json:"TrackVersions"`
