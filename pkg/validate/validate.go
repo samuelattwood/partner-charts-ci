@@ -92,11 +92,19 @@ func ChecksumFile(filePath string) (string, error) {
 }
 
 func CompareDirectories(leftPath, rightPath string, exclude map[string]struct{}) (DirectoryComparison, error) {
+	logrus.Debugf("Comparing directories %s and %s", leftPath, rightPath)
 	directoryComparison := DirectoryComparison{
 		Match: true,
 	}
 	checkedSet := make(map[string]struct{})
 	var checked = struct{}{}
+
+	if _, err := os.Stat(leftPath); os.IsNotExist(err) {
+		return directoryComparison, err
+	}
+	if _, err := os.Stat(rightPath); os.IsNotExist(err) {
+		return directoryComparison, err
+	}
 
 	compareLeft := func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {

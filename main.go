@@ -1229,6 +1229,14 @@ func validateRepo(c *cli.Context) {
 	for dirPath := range validatePaths {
 		upstreamPath := path.Join(cloneDir, dirPath)
 		updatePath := path.Join(getRepoRoot(), dirPath)
+		if _, err := os.Stat(updatePath); os.IsNotExist(err) {
+			logrus.Infof("Directory '%s' not in source. Skipping...", dirPath)
+			continue
+		}
+		if _, err := os.Stat(upstreamPath); os.IsNotExist(err) {
+			logrus.Infof("Directory '%s' not in upstream. Skipping...", dirPath)
+			continue
+		}
 		newComparison, err := validate.CompareDirectories(upstreamPath, updatePath, excludeFiles)
 		if err != nil {
 			logrus.Error(err)
