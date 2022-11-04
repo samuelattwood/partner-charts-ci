@@ -80,19 +80,9 @@ func (p PackageList) Swap(i, j int) {
 func (p PackageList) Less(i, j int) bool {
 	if p[i].SourceMetadata != nil && p[j].SourceMetadata != nil {
 		if p[i].SourceMetadata.ParsedVendor != p[j].SourceMetadata.ParsedVendor {
-			v := []string{
-				p[i].SourceMetadata.Vendor,
-				p[j].SourceMetadata.Vendor,
-			}
-			sort.Strings(v)
-			return v[0] == p[i].SourceMetadata.Vendor
+			return p[i].SourceMetadata.Vendor < p[j].SourceMetadata.Vendor
 		}
-		n := []string{
-			p[i].SourceMetadata.Name,
-			p[j].SourceMetadata.Name,
-		}
-		sort.Strings(n)
-		return n[0] == p[i].SourceMetadata.Name
+		return p[i].SourceMetadata.Name < p[j].SourceMetadata.Name
 	}
 
 	return false
@@ -424,14 +414,14 @@ func commitChanges(updatedList PackageList) error {
 
 	wt.Add(indexFile)
 
-	commitMessage := "Charts CI"
+	commitMessage := "Charts CI\n```"
 	sort.Sort(updatedList)
 	for _, packageWrapper := range updatedList {
 		lineItem := fmt.Sprintf("  %s/%s:\n",
 			packageWrapper.SourceMetadata.ParsedVendor,
 			packageWrapper.SourceMetadata.Name)
 		for _, version := range packageWrapper.FetchVersions {
-			lineItem += fmt.Sprintf("    %s\n", version.Version)
+			lineItem += fmt.Sprintf("    - %s\n", version.Version)
 		}
 		if packageWrapper.LatestStored.Digest == "" {
 			additions += lineItem
@@ -446,6 +436,8 @@ func commitChanges(updatedList PackageList) error {
 	if updates != "" {
 		commitMessage += fmt.Sprintf("\nUpdated:\n%s", updates)
 	}
+
+	commitMessage += "```"
 
 	wt.Commit(commitMessage, &commitOptions)
 
