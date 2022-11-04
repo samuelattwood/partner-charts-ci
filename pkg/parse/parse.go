@@ -4,6 +4,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -29,8 +30,10 @@ type PackageYaml struct {
 type UpstreamYaml struct {
 	AHPackageName      string         `json:"ArtifactHubPackage"`
 	AHRepoName         string         `json:"ArtifactHubRepo"`
+	AutoInstall        string         `json:"AutoInstall"`
 	ChartYaml          chart.Metadata `json:"ChartMetadata"`
 	DisplayName        string         `json:"DisplayName"`
+	Experimental       bool           `json:"Experimental"`
 	Fetch              string         `json:"Fetch"`
 	GitBranch          string         `json:"GitBranch"`
 	GitHubRelease      bool           `json:"GitHubRelease"`
@@ -38,6 +41,7 @@ type UpstreamYaml struct {
 	GitSubDirectory    string         `json:"GitSubdirectory"`
 	HelmChart          string         `json:"HelmChart"`
 	HelmRepoUrl        string         `json:"HelmRepo"`
+	Hidden             bool           `json:"Hidden"`
 	Namespace          string         `json:"Namespace"`
 	PackageVersion     int            `json:"PackageVersion"`
 	RemoteDependencies bool           `json:"RemoteDependencies"`
@@ -101,7 +105,7 @@ func ListPackages(packageDirectory string, currentPackage string) (map[string]st
 
 		if !info.IsDir() && info.Name() == UpstreamOptionsFile {
 			packagePath := filepath.Dir(filePath)
-			packageName := filepath.Base(packagePath)
+			packageName := strings.TrimPrefix(packagePath, packageDirectory)
 			packageList[packageName] = packagePath
 		}
 

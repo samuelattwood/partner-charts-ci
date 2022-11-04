@@ -57,8 +57,6 @@ type PackageWrapper struct {
 	NewerUntracked []*semver.Version
 	//Force only pulling the latest version
 	OnlyLatest bool
-	//Set dependency chart repository to local file
-	RemoteDependencies bool
 	//Indicator to write chart to disk
 	Save bool
 	//SourceMetadata represents metadata fetched from the upstream repository
@@ -67,6 +65,37 @@ type PackageWrapper struct {
 	FetchVersions repo.ChartVersions
 	//UpstreamYaml represents the values set in the package's upstream.yaml file
 	UpstreamYaml *parse.UpstreamYaml
+}
+
+type PackageList []PackageWrapper
+
+func (p PackageList) Len() int {
+	return len(p)
+}
+
+func (p PackageList) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+
+func (p PackageList) Less(i, j int) bool {
+	if p[i].SourceMetadata != nil && p[j].SourceMetadata != nil {
+		if p[i].SourceMetadata.ParsedVendor != p[j].SourceMetadata.ParsedVendor {
+			v := []string{
+				p[i].SourceMetadata.Vendor,
+				p[j].SourceMetadata.Vendor,
+			}
+			sort.Strings(v)
+			return v[0] == p[i].SourceMetadata.Vendor
+		}
+		n := []string{
+			p[i].SourceMetadata.Name,
+			p[j].SourceMetadata.Name,
+		}
+		sort.Strings(n)
+		return n[0] == p[i].SourceMetadata.Name
+	}
+
+	return false
 }
 
 // Generates patch files from prepared chart
@@ -231,7 +260,6 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 			packageWrapper.SourceMetadata.ReleaseName = packageWrapper.SourceMetadata.Name
 		}
 
-		packageWrapper.RemoteDependencies = packageWrapper.UpstreamYaml.RemoteDependencies
 	}
 	if len(packageWrapper.FetchVersions) == 0 {
 		return false, nil
@@ -275,7 +303,7 @@ func (packageWrapper PackageWrapper) hide() error {
 			return err
 		}
 
-		helmChart.Metadata.Annotations["catalog.cattle.io/hidden"] = "true"
+		annotateChart(helmChart, "catalog.cattle.io/hidden", "true")
 
 		err = os.RemoveAll(versionPath)
 		if err != nil {
@@ -358,7 +386,7 @@ func gitCleanup() error {
 }
 
 // Commits changes to index file, assets, charts, and packages
-func commitChanges(updatedList []PackageWrapper) error {
+func commitChanges(updatedList PackageList) error {
 	var additions, updates string
 	commitOptions := git.CommitOptions{}
 
@@ -397,6 +425,7 @@ func commitChanges(updatedList []PackageWrapper) error {
 	wt.Add(indexFile)
 
 	commitMessage := "Charts CI"
+	sort.Sort(updatedList)
 	for _, packageWrapper := range updatedList {
 		lineItem := fmt.Sprintf("  %s/%s:\n",
 			packageWrapper.SourceMetadata.ParsedVendor,
@@ -742,6 +771,9 @@ func parseVendor(upstreamYamlVendor, chartName, packagePath string) (string, str
 }
 
 func annotateChart(helmChart *chart.Chart, annotation, value string) {
+	if helmChart.Metadata.Annotations == nil {
+		helmChart.Metadata.Annotations = make(map[string]string)
+	}
 	if _, ok := helmChart.Metadata.Annotations[annotation]; !ok {
 		helmChart.Metadata.Annotations[annotation] = value
 	}
@@ -794,7 +826,19 @@ func conformPackage(packageWrapper PackageWrapper) error {
 			return err
 		}
 
-		if !packageWrapper.RemoteDependencies {
+		if autoInstall := packageWrapper.UpstreamYaml.AutoInstall; autoInstall != "" {
+			annotateChart(helmChart, "catalog.cattle.io/auto-install", autoInstall)
+		}
+
+		if packageWrapper.UpstreamYaml.Experimental {
+			annotateChart(helmChart, "catalog.cattle.io/experimental", "true")
+		}
+
+		if packageWrapper.UpstreamYaml.Hidden {
+			annotateChart(helmChart, "catalog.cattle.io/hidden", "true")
+		}
+
+		if !packageWrapper.UpstreamYaml.RemoteDependencies {
 			for _, d := range helmChart.Metadata.Dependencies {
 				d.Repository = fmt.Sprintf("file://./charts/%s", d.Name)
 			}
@@ -829,6 +873,13 @@ func conformPackage(packageWrapper PackageWrapper) error {
 				annotateChart(helmChart, "catalog.cattle.io/kube-version", helmChart.Metadata.KubeVersion)
 			} else if packageWrapper.UpstreamYaml.ChartYaml.KubeVersion != "" {
 				annotateChart(helmChart, "catalog.cattle.io/kube-version", packageWrapper.UpstreamYaml.ChartYaml.KubeVersion)
+			}
+
+			if packageVersion := packageWrapper.UpstreamYaml.PackageVersion; packageVersion != 0 {
+				helmChart.Metadata.Version, err = conform.GeneratePackageVersion(helmChart.Metadata.Version, &packageVersion, "")
+				if err != nil {
+					logrus.Error(err)
+				}
 			}
 
 		}
@@ -968,9 +1019,9 @@ func writeIndex() error {
 
 // Fetches metadata from upstream repositories.
 // Return list of skipped packages
-func fetchUpstreams(packageWrapperList []PackageWrapper) []string {
+func fetchUpstreams(packageList PackageList) []string {
 	skippedList := make([]string, 0)
-	for _, packageWrapper := range packageWrapperList {
+	for _, packageWrapper := range packageList {
 		err := conformPackage(packageWrapper)
 		if err != nil {
 			logrus.Error(err)
@@ -993,7 +1044,7 @@ func parseUpstream(packagePath string) (*parse.UpstreamYaml, error) {
 }
 
 // Generates list of package paths with upstream yaml available
-func generatePackageList() []PackageWrapper {
+func generatePackageList() PackageList {
 	currentPackage := os.Getenv(packageEnvVariable)
 	packageDirectory := filepath.Join(getRepoRoot(), repositoryPackagesDir)
 	packageMap, err := parse.ListPackages(packageDirectory, currentPackage)
@@ -1016,7 +1067,7 @@ func generatePackageList() []PackageWrapper {
 
 	sort.Strings(packageNames)
 
-	packageList := make([]PackageWrapper, 0)
+	packageList := make(PackageList, 0)
 	for _, packageName := range packageNames {
 		var packageWrapper PackageWrapper
 		if _, ok := packageMap[packageName]; !ok {
@@ -1033,8 +1084,8 @@ func generatePackageList() []PackageWrapper {
 
 // Populates list of package wrappers, handles manual and automatic variation
 // If print, function will print information during processing
-func populatePackages(onlyUpdates bool, onlyLatest bool, print bool) ([]PackageWrapper, error) {
-	packageList := make([]PackageWrapper, 0)
+func populatePackages(onlyUpdates bool, onlyLatest bool, print bool) (PackageList, error) {
+	packageList := make(PackageList, 0)
 	for _, packageWrapper := range generatePackageList() {
 		logrus.Debugf("Populating package from %s\n", packageWrapper.Path)
 		if onlyLatest {
@@ -1046,9 +1097,9 @@ func populatePackages(onlyUpdates bool, onlyLatest bool, print bool) ([]PackageW
 			continue
 		}
 		if print {
-			logrus.Infof("Parsed %s\n", packageWrapper.SourceMetadata.Name)
+			logrus.Infof("Parsed %s/%s\n", packageWrapper.SourceMetadata.ParsedVendor, packageWrapper.SourceMetadata.Name)
 			if len(packageWrapper.FetchVersions) == 0 {
-				logrus.Infof("%s/%s is up-to-date\n",
+				logrus.Infof("%s (%s) is up-to-date\n",
 					packageWrapper.SourceMetadata.Vendor, packageWrapper.SourceMetadata.Name)
 			}
 			for _, version := range packageWrapper.FetchVersions {
@@ -1069,7 +1120,7 @@ func populatePackages(onlyUpdates bool, onlyLatest bool, print bool) ([]PackageW
 
 // func generateChanges(genpatch bool, save bool, commit bool, onlyUpdates bool, print bool) {
 func generateChanges(auto bool, stage bool) {
-	var packageList []PackageWrapper
+	var packageList PackageList
 	var err error
 	if auto || stage {
 		packageList, err = populatePackages(true, false, true)

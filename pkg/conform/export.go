@@ -82,6 +82,7 @@ func ApplyOverlayFiles(packagePath string) error {
 
 			generatedPath := filepath.Join(packagePath, "charts", filePath)
 			if _, err := os.Stat(generatedPath); !os.IsNotExist(err) {
+				logrus.Warnf("Replacing %s with overlay file", filePath)
 				err = os.Remove(generatedPath)
 				if err != nil {
 					return err
