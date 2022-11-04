@@ -29,30 +29,21 @@ const (
 )
 
 type ArtifactHubApiHelmRepo struct {
-	DisplayName    string `json:"display_name,omitempty"`
-	Name           string `json:"name"`
 	OrgDisplayName string `json:"organization_display_name,omitempty"`
 	OrgName        string `json:"organization_name,omitempty"`
 	Url            string `json:"url"`
 }
 
 type ArtifactHubApiHelm struct {
-	ContentUrl     string                 `json:"content_url"`
-	Name           string                 `json:"name"`
-	NormalizedName string                 `json:"normalized_name"`
-	Repository     ArtifactHubApiHelmRepo `json:"repository"`
-	Version        string                 `json:"version"`
+	ContentUrl string                 `json:"content_url"`
+	Repository ArtifactHubApiHelmRepo `json:"repository"`
+	Version    string                 `json:"version"`
 }
 
 type ChartSourceMetadata struct {
 	Commit       string
-	DisplayName  string
-	Name         string
 	Source       string
 	SubDirectory string
-	Vendor       string
-	ParsedVendor string
-	ReleaseName  string
 	Versions     repo.ChartVersions
 }
 
@@ -93,8 +84,6 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 		}
 	}
 
-	chartSourceMeta.Name = upstreamVersions[0].Metadata.Name
-	chartSourceMeta.DisplayName = upstreamVersions[0].Metadata.Name
 	chartSourceMeta.Versions = indexYaml.Entries[upstreamYaml.HelmChart]
 
 	return chartSourceMeta, nil
@@ -125,7 +114,6 @@ func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetad
 	}
 
 	versionMetadata := chart.Metadata{
-		Name:    apiResp.Name,
 		Version: apiResp.Version,
 	}
 
@@ -136,8 +124,6 @@ func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetad
 
 	versions := repo.ChartVersions{&version}
 
-	chartSourceMeta.DisplayName = apiResp.Name
-	chartSourceMeta.Name = apiResp.NormalizedName
 	chartSourceMeta.Versions = versions
 
 	return chartSourceMeta, nil
@@ -257,8 +243,6 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 
 	chartSourceMeta := ChartSourceMetadata{
 		Commit:       upstreamCommit,
-		DisplayName:  helmChart.Metadata.Name,
-		Name:         helmChart.Metadata.Name,
 		Source:       "Git",
 		SubDirectory: upstreamYaml.GitSubDirectory,
 		Versions:     versions,
