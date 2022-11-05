@@ -454,36 +454,20 @@ func commitChanges(updatedList PackageList) error {
 
 // Cleans up ephemeral chart directory files from package prepare
 func cleanPackage(packagePath string, manualUpdate bool) error {
-	var err error
-	var packageYaml *parse.PackageYaml
 	packageName := strings.TrimPrefix(getRelativePath(packagePath), "/")
-	logrus.Debugf("Cleaning package %s", packageName)
-	logrus.Debugf("Generating package yaml if it does not exist")
-	if !manualUpdate {
-		packageYaml, err = writePackageYaml(
-			packagePath,
-			0,
-			"",
-			"",
-			"https://.tgz",
-			false,
-		)
+	logrus.Infof("Cleaning package %s\n", packageName)
+	if manualUpdate {
+		logrus.Debugf("Generating package %s\n", packageName)
+		pkg, err := generatePackage(packagePath)
 		if err != nil {
 			return err
 		}
-	}
-	logrus.Debugf("Generating package %s\n", packageName)
-	pkg, err := generatePackage(packagePath)
-	if err != nil {
-		return err
-	}
-	logrus.Infof("Cleaning package %s\n", packageName)
-	err = pkg.Clean()
-	if err != nil {
-		return err
-	}
-	if !manualUpdate {
-		packageYaml.Remove()
+		err = pkg.Clean()
+		if err != nil {
+			return err
+		}
+	} else {
+		os.RemoveAll(path.Join(packagePath, repositoryChartsDir))
 	}
 
 	return nil
