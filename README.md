@@ -63,8 +63,10 @@ Options for `upstream.yaml`
 | ------------- | ------------- |------------- |
 | ArtifactHubPackage | ArtifactHubRepo | Defines the package to pull from the defined ArtifactHubRepo
 | ArtifactHubRepo | ArtifactHubPackage | Defines the repo to access on Artifact Hub
+| AutoInstall | | Allows setting a required additional chart to deploy prior to current chart, such as a dedicated CRDs chart
 | ChartMetadata | | Allows setting/overriding the value of any valid Chart.yaml variable
 | DisplayName | | Sets the name the chart will be listed under in the Rancher UI
+| Experimental | | Adds the 'experimental' annotation which adds a flag on the UI entry
 | Fetch | HelmChart, HelmRepo | Selects set of charts to pull from upstream.<br />- **latest** will pull only the latest chart version *default*<br />- **newer** will pull all newer versions than currently stored<br />- **all** will pull all versions
 | GitBranch | GitRepo | Defines which branch to pull from the upstream GitRepo
 | GitHubRelease | GitRepo | If true, will pull latest GitHub release from repo. Requires GitHub URL
@@ -72,11 +74,12 @@ Options for `upstream.yaml`
 | GitSubdirectory | GitRepo | Allows selection of a subdirectory of the upstream git repo to pull the chart from
 | HelmChart | HelmRepo | Defines which chart to pull from the upstream Helm repo
 | HelmRepo | HelmChart | Defines the upstream Helm repo to pull from
+| Hidden | | Adds the 'hidden' annotation which hides the chart from the Rancher UI
+| Namespace | | Addes the 'namespace' annotation which hard-codes a deployment namespace for the chart
 | PackageVersion | | Used to generate new patch version of chart
-| ReleaseName | | Sets the value of the release-name Rancher annotation
+| ReleaseName | | Sets the value of the release-name Rancher annotation. Defaults to the chart name
 | TrackVersions | HelmChart, HelmRepo | Allows selection of multiple *Major.Minor* versions to track from upstream independently.
 | Vendor | | Sets the vendor name providing the chart
-| Version | | Allows for overriding of upstream chart version
 
 ### Helm Repo
 ```yaml
