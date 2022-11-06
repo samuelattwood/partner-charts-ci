@@ -58,7 +58,7 @@ func OverlayChartMetadata(helmChart *chart.Chart, overlay chart.Metadata) {
 	}
 	if overlay.Annotations != nil {
 		for annotation, value := range overlay.Annotations {
-			helmChart.Metadata.Annotations[annotation] = value
+			annotateChart(helmChart, annotation, value, true)
 		}
 	}
 	/* Leaving in place, commented, to match upstream Helm metadata
@@ -76,11 +76,11 @@ func OverlayChartMetadata(helmChart *chart.Chart, overlay chart.Metadata) {
 
 }
 
-func annotateChart(helmChart *chart.Chart, annotation, value string) {
+func annotateChart(helmChart *chart.Chart, annotation, value string, override bool) {
 	if helmChart.Metadata.Annotations == nil {
 		helmChart.Metadata.Annotations = make(map[string]string)
 	}
-	if _, ok := helmChart.Metadata.Annotations[annotation]; !ok {
+	if _, ok := helmChart.Metadata.Annotations[annotation]; !ok || override {
 		helmChart.Metadata.Annotations[annotation] = value
 	}
 }
@@ -91,7 +91,7 @@ func ApplyChartAnnotations(helmChart *chart.Chart, annotations map[string]string
 	}
 
 	for annotation, value := range annotations {
-		annotateChart(helmChart, annotation, value)
+		annotateChart(helmChart, annotation, value, false)
 	}
 }
 
