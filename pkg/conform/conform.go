@@ -76,23 +76,69 @@ func OverlayChartMetadata(helmChart *chart.Chart, overlay chart.Metadata) {
 
 }
 
-func annotateChart(helmChart *chart.Chart, annotation, value string, override bool) {
+func annotateChart(helmChart *chart.Chart, annotation, value string, override bool) bool {
+	modified := false
 	if helmChart.Metadata.Annotations == nil {
 		helmChart.Metadata.Annotations = make(map[string]string)
 	}
 	if _, ok := helmChart.Metadata.Annotations[annotation]; !ok || override {
+		logrus.Debugf("Adding annotation '%s: %s' to %s (%s)\n", annotation, value, helmChart.Name(), helmChart.Metadata.Version)
 		helmChart.Metadata.Annotations[annotation] = value
+		modified = true
 	}
+
+	return modified
 }
 
-func ApplyChartAnnotations(helmChart *chart.Chart, annotations map[string]string) {
+func deannotateChart(helmChart *chart.Chart, annotation, value string) bool {
+	modified := false
+	removeAnnotation := false
+	if helmChart.Metadata.Annotations != nil {
+		if _, ok := helmChart.Metadata.Annotations[annotation]; ok {
+			if value != "" {
+				if helmChart.Metadata.Annotations[annotation] == value {
+					logrus.Debugf("Removing annotation '%s: %s' from %s (%s)\n", annotation, value, helmChart.Name(), helmChart.Metadata.Version)
+					removeAnnotation = true
+				}
+			} else {
+				logrus.Debugf("Removing annotation '%s' from %s (%s)\n", annotation, helmChart.Name(), helmChart.Metadata.Version)
+				removeAnnotation = true
+			}
+		}
+		if removeAnnotation {
+			delete(helmChart.Metadata.Annotations, annotation)
+			modified = true
+		}
+	}
+
+	return modified
+}
+
+func ApplyChartAnnotations(helmChart *chart.Chart, annotations map[string]string, override bool) bool {
+	modified := false
 	if helmChart.Metadata.Annotations == nil {
 		helmChart.Metadata.Annotations = make(map[string]string)
 	}
 
 	for annotation, value := range annotations {
-		annotateChart(helmChart, annotation, value, false)
+		if annotateChart(helmChart, annotation, value, override) {
+			modified = true
+		}
 	}
+
+	return modified
+
+}
+
+func RemoveChartAnnotations(helmChart *chart.Chart, annotations map[string]string) bool {
+	modified := false
+	for annotation, value := range annotations {
+		if deannotateChart(helmChart, annotation, value) {
+			modified = true
+		}
+	}
+
+	return modified
 }
 
 func StripPackageVersion(chartVersion string) string {

@@ -106,6 +106,7 @@ func ListPackages(packageDirectory string, currentPackage string) (map[string]st
 		if !info.IsDir() && info.Name() == UpstreamOptionsFile {
 			packagePath := filepath.Dir(filePath)
 			packageName := strings.TrimPrefix(packagePath, packageDirectory)
+			packageName = strings.TrimPrefix(packageName, "/")
 			packageList[packageName] = packagePath
 		}
 

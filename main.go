@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -25,6 +26,15 @@ import (
 )
 
 const (
+	annotationAutoInstall  = "catalog.cattle.io/auto-install"
+	annotationCertified    = "catalog.cattle.io/certified"
+	annotationDisplayName  = "catalog.cattle.io/display-name"
+	annotationExperimental = "catalog.cattle.io/experimental"
+	annotationFeatured     = "catalog.cattle.io/featured"
+	annotationHidden       = "catalog.cattle.io/hidden"
+	annotationKubeVersion  = "catalog.cattle.io/kube-version"
+	annotationNamespace    = "catalog.cattle.io/namespace"
+	annotationReleaseName  = "catalog.cattle.io/release-name"
 	//indexFile sets the filename for the repo index yaml
 	indexFile = "index.yaml"
 	//packageEnvVariable sets the environment variable to check for a package name
@@ -36,6 +46,7 @@ const (
 	//repositoryPackagesDir sets the directory name for package configurations
 	repositoryPackagesDir = "packages"
 	configOptionsFile     = "configuration.yaml"
+	featuredMax           = 5
 )
 
 var (
@@ -264,7 +275,8 @@ func (packageWrapper *PackageWrapper) populate() (bool, error) {
 	return true, nil
 }
 
-func (packageWrapper PackageWrapper) hide() error {
+func (packageWrapper PackageWrapper) annotate(annotation, value string, remove, onlyLatest bool) error {
+	var versionsToUpdate repo.ChartVersions
 	chartName := packageWrapper.LatestStored.Name
 
 	allStoredVersions, err := getStoredVersions(chartName)
@@ -272,15 +284,15 @@ func (packageWrapper PackageWrapper) hide() error {
 		return err
 	}
 
-	helmIndexYaml, err := readIndex()
-	if err != nil {
-		return err
+	if onlyLatest {
+		versionsToUpdate = repo.ChartVersions{allStoredVersions[0]}
+	} else {
+		versionsToUpdate = allStoredVersions
 	}
 
-	indexFilePath := filepath.Join(getRepoRoot(), indexFile)
+	for _, version := range versionsToUpdate {
+		modified := false
 
-	for _, version := range allStoredVersions {
-		logrus.Infof("Hiding %s (%s)\n", version.Name, version.Version)
 		assetsPath := filepath.Join(
 			getRepoRoot(),
 			repositoryAssetsDir,
@@ -299,31 +311,34 @@ func (packageWrapper PackageWrapper) hide() error {
 			return err
 		}
 
-		packageWrapper.Annotations["catalog.cattle.io/hidden"] = "true"
-
-		conform.ApplyChartAnnotations(helmChart, packageWrapper.Annotations)
-
-		err = os.RemoveAll(versionPath)
-		if err != nil {
-			return err
+		if remove {
+			modified = conform.RemoveChartAnnotations(helmChart, map[string]string{annotation: value})
+		} else {
+			modified = conform.ApplyChartAnnotations(helmChart, map[string]string{annotation: value}, true)
 		}
 
-		err = conform.ExportChartAsset(helmChart, assetsPath)
-		if err != nil {
-			return err
+		if modified {
+
+			err = os.RemoveAll(versionPath)
+			if err != nil {
+				return err
+			}
+
+			err = conform.ExportChartAsset(helmChart, assetsPath)
+			if err != nil {
+				return err
+			}
+			conform.ExportChartDirectory(helmChart, versionPath)
+			if err != nil {
+				return err
+			}
+
+			err = removeVersionFromIndex(chartName, *version)
+			if err != nil {
+				return err
+			}
 		}
-		conform.ExportChartDirectory(helmChart, versionPath)
-		if err != nil {
-			return err
-		}
 
-	}
-
-	delete(helmIndexYaml.Entries, chartName)
-
-	err = helmIndexYaml.WriteFile(indexFilePath, 0644)
-	if err != nil {
-		return err
 	}
 
 	err = writeIndex()
@@ -802,15 +817,15 @@ func conformPackage(packageWrapper PackageWrapper) error {
 		}
 
 		if autoInstall := packageWrapper.UpstreamYaml.AutoInstall; autoInstall != "" {
-			packageWrapper.Annotations["catalog.cattle.io/auto-install"] = autoInstall
+			packageWrapper.Annotations[annotationAutoInstall] = autoInstall
 		}
 
 		if packageWrapper.UpstreamYaml.Experimental {
-			packageWrapper.Annotations["catalog.cattle.io/experimental"] = "true"
+			packageWrapper.Annotations[annotationExperimental] = "true"
 		}
 
 		if packageWrapper.UpstreamYaml.Hidden {
-			packageWrapper.Annotations["catalog.cattle.io/hidden"] = "true"
+			packageWrapper.Annotations[annotationHidden] = "true"
 		}
 
 		if !packageWrapper.UpstreamYaml.RemoteDependencies {
@@ -836,22 +851,29 @@ func conformPackage(packageWrapper PackageWrapper) error {
 			}
 
 		} else {
-			packageWrapper.Annotations["catalog.cattle.io/certified"] = "partner"
-			packageWrapper.Annotations["catalog.cattle.io/release-name"] = packageWrapper.Name
-			packageWrapper.Annotations["catalog.cattle.io/display-name"] = packageWrapper.DisplayName
+			packageWrapper.Annotations[annotationCertified] = "partner"
+			packageWrapper.Annotations[annotationReleaseName] = packageWrapper.Name
+			packageWrapper.Annotations[annotationDisplayName] = packageWrapper.DisplayName
 
 			conform.OverlayChartMetadata(helmChart, packageWrapper.UpstreamYaml.ChartYaml)
 
+			if val, ok := getByAnnotation(annotationFeatured, "")[packageWrapper.Name]; ok {
+				logrus.Debugf("Migrating featured annotation to latest version %s\n", packageWrapper.Name)
+				featuredIndex := val[0].Annotations[annotationFeatured]
+				packageWrapper.annotate(annotationFeatured, "", true, false)
+				packageWrapper.Annotations[annotationFeatured] = featuredIndex
+			}
+
 			if packageWrapper.UpstreamYaml.Namespace != "" {
-				packageWrapper.Annotations["catalog.cattle.io/namespace"] = packageWrapper.UpstreamYaml.Namespace
+				packageWrapper.Annotations[annotationNamespace] = packageWrapper.UpstreamYaml.Namespace
 			}
 			if helmChart.Metadata.KubeVersion != "" && packageWrapper.UpstreamYaml.ChartYaml.KubeVersion != "" {
-				packageWrapper.Annotations["catalog.cattle.io/kube-version"] = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
+				packageWrapper.Annotations[annotationKubeVersion] = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
 				helmChart.Metadata.KubeVersion = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
 			} else if helmChart.Metadata.KubeVersion != "" {
-				packageWrapper.Annotations["catalog.cattle.io/kube-version"] = helmChart.Metadata.KubeVersion
+				packageWrapper.Annotations[annotationKubeVersion] = helmChart.Metadata.KubeVersion
 			} else if packageWrapper.UpstreamYaml.ChartYaml.KubeVersion != "" {
-				packageWrapper.Annotations["catalog.cattle.io/kube-version"] = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
+				packageWrapper.Annotations[annotationKubeVersion] = packageWrapper.UpstreamYaml.ChartYaml.KubeVersion
 			}
 
 			if packageVersion := packageWrapper.UpstreamYaml.PackageVersion; packageVersion != 0 {
@@ -861,7 +883,7 @@ func conformPackage(packageWrapper PackageWrapper) error {
 				}
 			}
 
-			conform.ApplyChartAnnotations(helmChart, packageWrapper.Annotations)
+			conform.ApplyChartAnnotations(helmChart, packageWrapper.Annotations, false)
 
 		}
 
@@ -962,6 +984,73 @@ func getLatestStoredVersion(chartName string) (repo.ChartVersion, error) {
 	return latestVersion, nil
 }
 
+func getByAnnotation(annotation, value string) map[string]repo.ChartVersions {
+	indexYaml, err := readIndex()
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	matchedVersions := make(map[string]repo.ChartVersions)
+
+	for chartName := range indexYaml.Entries {
+		entries := indexYaml.Entries[chartName]
+		for _, version := range entries {
+			appendVersion := false
+			if _, ok := version.Annotations[annotation]; ok {
+				if value != "" {
+					if version.Annotations[annotation] == value {
+						appendVersion = true
+					}
+				} else {
+					appendVersion = true
+				}
+			}
+			if appendVersion {
+				if _, ok := matchedVersions[chartName]; !ok {
+					matchedVersions[chartName] = repo.ChartVersions{version}
+				} else {
+					matchedVersions[chartName] = append(matchedVersions[chartName], version)
+				}
+			}
+		}
+	}
+
+	return matchedVersions
+}
+
+func removeVersionFromIndex(chartName string, version repo.ChartVersion) error {
+	entryIndex := -1
+	indexYaml, err := readIndex()
+	if err != nil {
+		return err
+	}
+	if _, ok := indexYaml.Entries[chartName]; !ok {
+		return fmt.Errorf("%s not present in index entries", chartName)
+	}
+
+	indexEntries := indexYaml.Entries[chartName]
+
+	for i, entryVersion := range indexEntries {
+		if entryVersion.Version == version.Version {
+			entryIndex = i
+			break
+		}
+	}
+
+	if entryIndex >= 0 {
+		entries := make(repo.ChartVersions, 0)
+		entries = append(entries, indexEntries[:entryIndex]...)
+		entries = append(entries, indexEntries[entryIndex+1:]...)
+		indexYaml.Entries[chartName] = entries
+	} else {
+		return fmt.Errorf("version %s not found for chart %s in index", version.Version, chartName)
+	}
+
+	indexFilePath := filepath.Join(getRepoRoot(), indexFile)
+	err = indexYaml.WriteFile(indexFilePath, 0644)
+
+	return err
+}
+
 // Reads in current index yaml
 func readIndex() (*repo.IndexFile, error) {
 	indexFilePath := filepath.Join(getRepoRoot(), indexFile)
@@ -1026,8 +1115,7 @@ func parseUpstream(packagePath string) (*parse.UpstreamYaml, error) {
 }
 
 // Generates list of package paths with upstream yaml available
-func generatePackageList() PackageList {
-	currentPackage := os.Getenv(packageEnvVariable)
+func generatePackageList(currentPackage string) PackageList {
 	packageDirectory := filepath.Join(getRepoRoot(), repositoryPackagesDir)
 	packageMap, err := parse.ListPackages(packageDirectory, currentPackage)
 	if err != nil {
@@ -1052,13 +1140,14 @@ func generatePackageList() PackageList {
 	packageList := make(PackageList, 0)
 	for _, packageName := range packageNames {
 		var packageWrapper PackageWrapper
+		//If name is not present in map, fall back to package.yaml method
 		if _, ok := packageMap[packageName]; !ok {
+			//ManualUpdate indicates usage of package.yaml method
 			packageWrapper.ManualUpdate = true
 			packageMap[packageName] = path.Join(getRepoRoot(), repositoryPackagesDir, packageName)
 		}
 
 		packageWrapper.Path = packageMap[packageName]
-		packageWrapper.Annotations = make(map[string]string, 0)
 
 		packageList = append(packageList, packageWrapper)
 	}
@@ -1068,9 +1157,10 @@ func generatePackageList() PackageList {
 
 // Populates list of package wrappers, handles manual and automatic variation
 // If print, function will print information during processing
-func populatePackages(onlyUpdates bool, onlyLatest bool, print bool) (PackageList, error) {
+func populatePackages(currentPackage string, onlyUpdates bool, onlyLatest bool, print bool) (PackageList, error) {
 	packageList := make(PackageList, 0)
-	for _, packageWrapper := range generatePackageList() {
+	for _, packageWrapper := range generatePackageList(currentPackage) {
+		packageWrapper.Annotations = make(map[string]string)
 		logrus.Debugf("Populating package from %s\n", packageWrapper.Path)
 		if onlyLatest {
 			packageWrapper.OnlyLatest = true
@@ -1104,16 +1194,17 @@ func populatePackages(onlyUpdates bool, onlyLatest bool, print bool) (PackageLis
 
 // func generateChanges(genpatch bool, save bool, commit bool, onlyUpdates bool, print bool) {
 func generateChanges(auto bool, stage bool) {
+	currentPackage := os.Getenv(packageEnvVariable)
 	var packageList PackageList
 	var err error
 	if auto || stage {
-		packageList, err = populatePackages(true, false, true)
+		packageList, err = populatePackages(currentPackage, true, false, true)
 		for i := range packageList {
 			packageList[i].GenPatch = true
 			packageList[i].Save = true
 		}
 	} else {
-		packageList, err = populatePackages(false, true, true)
+		packageList, err = populatePackages(currentPackage, false, true, true)
 	}
 	if err != nil {
 		logrus.Fatal(err)
@@ -1141,7 +1232,7 @@ func generateChanges(auto bool, stage bool) {
 
 // CLI function call - Prints list of available packages to STDout
 func listPackages(c *cli.Context) {
-	packageList := generatePackageList()
+	packageList := generatePackageList(os.Getenv(packageEnvVariable))
 	vendorSorted := make([]string, 0)
 	for _, packageWrapper := range packageList {
 		packagesPath := filepath.Join(getRepoRoot(), repositoryPackagesDir)
@@ -1161,7 +1252,8 @@ func listPackages(c *cli.Context) {
 
 // CLI function call - Generates patch files for package(s)
 func patchCharts(c *cli.Context) {
-	packageList, err := populatePackages(false, false, true)
+	currentPackage := os.Getenv(packageEnvVariable)
+	packageList, err := populatePackages(currentPackage, false, false, true)
 	if err != nil {
 		logrus.Fatal(err)
 	}
@@ -1173,26 +1265,121 @@ func patchCharts(c *cli.Context) {
 	}
 }
 
-func hideChart(c *cli.Context) {
-	if os.Getenv(packageEnvVariable) == "" {
-		logrus.Fatal("Please set PACKAGE environment variable")
+// CLI function call - Appends annotaion to feature chart in Rancher UI
+func addFeaturedChart(c *cli.Context) {
+	if len(c.Args()) != 2 {
+		logrus.Fatalf("Please provide the chart name and featured number (1 - %d) as arguments\n", featuredMax)
 	}
-	packageList, err := populatePackages(false, false, false)
+	featuredChart := c.Args().Get(0)
+	featuredNumber, err := strconv.Atoi(c.Args().Get(1))
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	if featuredNumber < 1 || featuredNumber > featuredMax {
+		logrus.Fatalf("Featured number must be between %d and %d\n", 1, featuredMax)
+	}
+
+	packageList := generatePackageList(featuredChart)
+	if len(packageList) == 0 {
+		logrus.Fatalf("Package '%s' not available\n", featuredChart)
+	}
+
+	packageList, err = populatePackages(featuredChart, false, false, false)
 	if err != nil {
 		logrus.Fatal(err)
 	}
 
-	if len(packageList) == 1 {
-		err = packageList[0].hide()
+	featuredVersions := getByAnnotation(annotationFeatured, c.Args().Get(1))
+
+	if len(featuredVersions) > 0 {
+		for chartName := range featuredVersions {
+			logrus.Errorf("%s already featured at index %d\n", chartName, featuredNumber)
+		}
+	} else {
+		err = packageList[0].annotate(annotationFeatured, c.Args().Get(1), false, true)
 		if err != nil {
 			logrus.Fatal(err)
 		}
 	}
 }
 
+// CLI function call - Appends annotaion to feature chart in Rancher UI
+func removeFeaturedChart(c *cli.Context) {
+	if len(c.Args()) != 1 {
+		logrus.Fatal("Please provide the chart name as argument")
+	}
+	featuredChart := c.Args().Get(0)
+	packageMap, err := parse.ListPackages(repositoryPackagesDir, "")
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	if _, ok := packageMap[featuredChart]; !ok {
+		logrus.Fatalf("Package '%s' not available\n", featuredChart)
+	}
+
+	packageList, err := populatePackages(featuredChart, false, false, false)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	err = packageList[0].annotate(annotationFeatured, "", true, false)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+}
+
+func listFeaturedCharts(c *cli.Context) {
+	indexConflict := false
+	featuredSorted := make([]string, featuredMax)
+	featuredVersions := getByAnnotation(annotationFeatured, "")
+
+	for chartName, chartVersion := range featuredVersions {
+		featuredIndex, err := strconv.Atoi(chartVersion[0].Annotations[annotationFeatured])
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		if featuredSorted[featuredIndex] != "" {
+			indexConflict = true
+			featuredSorted[featuredIndex] += fmt.Sprintf(", %s", chartName)
+		} else {
+			featuredSorted[featuredIndex] = chartName
+		}
+	}
+	if indexConflict {
+		logrus.Errorf("Multiple charts given same featured index")
+	}
+
+	for i, chartName := range featuredSorted {
+		if featuredSorted[i] != "" {
+			fmt.Printf("%d: %s\n", i, chartName)
+		}
+	}
+
+}
+
+// CLI function call - Appends annotation to hide chart in Rancher UI
+func hideChart(c *cli.Context) {
+	if len(c.Args()) < 1 {
+		logrus.Fatal("Provide package name(s) as argument")
+	}
+	for _, currentPackage := range c.Args() {
+		packageList, err := populatePackages(currentPackage, false, false, false)
+		if err != nil {
+			logrus.Error(err)
+		}
+
+		if len(packageList) == 1 {
+			err = packageList[0].annotate(annotationHidden, "true", false, false)
+			if err != nil {
+				logrus.Error(err)
+			}
+		}
+	}
+}
+
 // CLI function call - Cleans package object(s)
 func cleanCharts(c *cli.Context) {
-	packageList := generatePackageList()
+	packageList := generatePackageList(os.Getenv(packageEnvVariable))
 	for _, packageWrapper := range packageList {
 		err := cleanPackage(packageWrapper.Path, packageWrapper.ManualUpdate)
 		if err != nil {
@@ -1379,6 +1566,27 @@ func main() {
 			Name:   "hide",
 			Usage:  "Apply 'catalog.cattle.io/hidden' annotation to all stored versions of chart",
 			Action: hideChart,
+		},
+		{
+			Name:  "feature",
+			Usage: "Manipulate charts featured in Rancher UI",
+			Subcommands: []cli.Command{
+				{
+					Name:   "list",
+					Usage:  "List currently featured charts",
+					Action: listFeaturedCharts,
+				},
+				{
+					Name:   "add",
+					Usage:  "Add featured annotation to chart",
+					Action: addFeaturedChart,
+				},
+				{
+					Name:   "remove",
+					Usage:  "Remove featured annotation from chart",
+					Action: removeFeaturedChart,
+				},
+			},
 		},
 		{
 			Name:   "validate",
