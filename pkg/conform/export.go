@@ -195,7 +195,12 @@ func ExportChartAsset(helmChart *chart.Chart, targetPath string) error {
 }
 
 func ExportChartDirectory(chart *chart.Chart, targetPath string) error {
-	tempDir, err := os.MkdirTemp("", "chartDir")
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	tempDir, err := os.MkdirTemp(wd, "chartDir")
 	if err != nil {
 		return err
 	}

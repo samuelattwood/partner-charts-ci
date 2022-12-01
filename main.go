@@ -518,16 +518,15 @@ func prepareManualPackage(packagePath string) error {
 
 // Prepares package for modification via patch and overlay
 func preparePackage(packagePath string, sourceMetadata *fetcher.ChartSourceMetadata, chartVersion *repo.ChartVersion) error {
+	var chart *chart.Chart
 	var err error
 	logrus.Debugf("Preparing package from %s", packagePath)
 
-	chartVersion.Metadata.Version, err = conform.GeneratePackageVersion(
-		chartVersion.Metadata.Version, nil, "")
-	if err != nil {
-		return err
+	if sourceMetadata.Source == "Git" {
+		chart, err = fetcher.LoadChartFromGit(chartVersion.URLs[0], sourceMetadata.SubDirectory, sourceMetadata.Commit)
+	} else {
+		chart, err = fetcher.LoadChartFromUrl(chartVersion.URLs[0])
 	}
-
-	chart, err := fetcher.LoadChartFromUrl(chartVersion.URLs[0])
 	if err != nil {
 		return err
 	}

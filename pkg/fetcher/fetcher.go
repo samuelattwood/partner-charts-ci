@@ -169,26 +169,60 @@ func fetchGitHubRelease(repoUrl string) (string, error) {
 	return releaseCommit, nil
 }
 
-// Constructs Chart Metadata for latest version published to Git Repository
-func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
-	var upstreamCommit string
+func gitCloneToDirectory(url, branch string, shallow bool) (string, error) {
 	cloneOptions := git.CloneOptions{
-		URL: upstreamYaml.GitRepoUrl,
+		URL: url,
 	}
 
-	if upstreamYaml.GitBranch != "" {
-		branchReference := fmt.Sprintf("refs/heads/%s", upstreamYaml.GitBranch)
-		cloneOptions.ReferenceName = plumbing.ReferenceName(branchReference)
-	}
-	if !upstreamYaml.GitHubRelease {
+	if shallow {
 		cloneOptions.Depth = 1
+	}
+
+	if branch != "" {
+		branchReference := fmt.Sprintf("refs/heads/%s", branch)
+		cloneOptions.ReferenceName = plumbing.ReferenceName(branchReference)
 	}
 
 	tempDir, err := os.MkdirTemp("", "gitRepo")
 	if err != nil {
-		return ChartSourceMetadata{}, err
+		return "", err
 	}
-	r, err := git.PlainClone(tempDir, false, &cloneOptions)
+
+	_, err = git.PlainClone(tempDir, false, &cloneOptions)
+	if err != nil {
+		return "", err
+	}
+
+	return tempDir, nil
+
+}
+
+func gitCheckoutCommit(path, commit string) error {
+	r, err := git.PlainOpen(path)
+	if err != nil {
+		return err
+	}
+
+	wt, err := r.Worktree()
+	if err != nil {
+		return err
+	}
+
+	err = wt.Checkout(&git.CheckoutOptions{
+		Hash: plumbing.NewHash(commit),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Constructs Chart Metadata for latest version published to Git Repository
+func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
+	var upstreamCommit string
+
+	clonePath, err := gitCloneToDirectory(upstreamYaml.GitRepoUrl, upstreamYaml.GitBranch, !upstreamYaml.GitHubRelease)
 	if err != nil {
 		return ChartSourceMetadata{}, err
 	}
@@ -200,18 +234,17 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 			return ChartSourceMetadata{}, err
 		}
 
-		wt, err := r.Worktree()
+		err = gitCheckoutCommit(clonePath, upstreamCommit)
 		if err != nil {
 			return ChartSourceMetadata{}, err
 		}
 
-		err = wt.Checkout(&git.CheckoutOptions{
-			Hash: plumbing.NewHash(upstreamCommit),
-		})
+	} else {
+		r, err := git.PlainOpen(clonePath)
 		if err != nil {
 			return ChartSourceMetadata{}, err
 		}
-	} else {
+
 		ref, err := r.Head()
 		if err != nil {
 			return ChartSourceMetadata{}, err
@@ -220,16 +253,16 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 		upstreamCommit = ref.Hash().String()
 	}
 
-	sourcePath := tempDir
+	chartPath := clonePath
 	if upstreamYaml.GitSubDirectory != "" {
-		sourcePath = filepath.Join(sourcePath, upstreamYaml.GitSubDirectory)
-		if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		chartPath = filepath.Join(clonePath, upstreamYaml.GitSubDirectory)
+		if _, err := os.Stat(chartPath); os.IsNotExist(err) {
 			err = fmt.Errorf("git subdirectory '%s' does not exist", upstreamYaml.GitSubDirectory)
 			return ChartSourceMetadata{}, err
 		}
 	}
-	logrus.Debugf("Git Temp Directory: %s\n", sourcePath)
-	helmChart, err := loader.Load(sourcePath)
+	logrus.Debugf("Git Temp Directory: %s\n", chartPath)
+	helmChart, err := loader.Load(chartPath)
 	if err != nil {
 		return ChartSourceMetadata{}, err
 	}
@@ -248,7 +281,7 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 		Versions:     versions,
 	}
 
-	err = os.RemoveAll(tempDir)
+	err = os.RemoveAll(clonePath)
 	if err != nil {
 		logrus.Debug(err)
 	}
@@ -286,4 +319,35 @@ func LoadChartFromUrl(url string) (*chart.Chart, error) {
 	}
 
 	return chart, nil
+}
+
+func LoadChartFromGit(url, subDirectory, commit string) (*chart.Chart, error) {
+	clonePath, err := gitCloneToDirectory(url, "", false)
+	if err != nil {
+		return nil, err
+	}
+
+	err = gitCheckoutCommit(clonePath, commit)
+	if err != nil {
+		return nil, err
+	}
+
+	chartPath := clonePath
+	if subDirectory != "" {
+		chartPath = filepath.Join(clonePath, subDirectory)
+		if _, err := os.Stat(chartPath); os.IsNotExist(err) {
+			err = fmt.Errorf("git subdirectory '%s' does not exist", subDirectory)
+			return nil, err
+		}
+	}
+
+	helmChart, err := loader.Load(chartPath)
+	if err != nil {
+		return nil, err
+	}
+
+	err = os.RemoveAll(clonePath)
+
+	return helmChart, err
+
 }
