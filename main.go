@@ -305,7 +305,7 @@ func (packageWrapper PackageWrapper) annotate(annotation, value string, remove, 
 			packageWrapper.ParsedVendor,
 			chartName,
 		)
-		helmChart, err := loader.Load(versionPath)
+		helmChart, err := loader.LoadFile(version.URLs[0])
 		if err != nil {
 			return err
 		}
@@ -317,6 +317,7 @@ func (packageWrapper PackageWrapper) annotate(annotation, value string, remove, 
 		}
 
 		if modified {
+			logrus.Debugf("Modified annotations of %s\n", packageWrapper.Name)
 
 			err = os.RemoveAll(versionPath)
 			if err != nil {
@@ -476,7 +477,10 @@ func commitChanges(updatedList PackageList) error {
 
 	commitMessage += "```"
 
-	wt.Commit(commitMessage, &commitOptions)
+	_, err = wt.Commit(commitMessage, &commitOptions)
+	if err != nil {
+		return err
+	}
 
 	gitStatus, err := wt.Status()
 	if err != nil {
@@ -1258,7 +1262,10 @@ func generateChanges(auto bool, stage bool) {
 			}
 		}
 		if auto {
-			commitChanges(packageList)
+			err = commitChanges(packageList)
+			if err != nil {
+				logrus.Fatal(err)
+			}
 		}
 	}
 }
