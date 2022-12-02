@@ -414,10 +414,6 @@ func commitChanges(updatedList PackageList) error {
 
 	logrus.Info("Committing changes")
 
-	opts := git.AddOptions{
-		All: true,
-	}
-
 	for _, packageWrapper := range updatedList {
 		assetsPath := path.Join(
 			repositoryAssetsDir,
@@ -433,12 +429,23 @@ func commitChanges(updatedList PackageList) error {
 			packageWrapper.ParsedVendor,
 			packageWrapper.Name)
 
-		opts.Path = assetsPath
-		wt.AddWithOptions(&opts)
-		opts.Path = chartsPath
-		wt.AddWithOptions(&opts)
-		opts.Path = packagesPath
-		wt.AddWithOptions(&opts)
+		wt.Add(assetsPath)
+		wt.Add(chartsPath)
+		wt.Add(packagesPath)
+
+		gitStatus, err := wt.Status()
+		if err != nil {
+			return err
+		}
+
+		for f, s := range gitStatus {
+			if s.Worktree == git.Deleted {
+				_, err = wt.Remove(f)
+				if err != nil {
+					return err
+				}
+			}
+		}
 
 	}
 
@@ -470,6 +477,15 @@ func commitChanges(updatedList PackageList) error {
 	commitMessage += "```"
 
 	wt.Commit(commitMessage, &commitOptions)
+
+	gitStatus, err := wt.Status()
+	if err != nil {
+		return err
+	}
+
+	if !gitStatus.IsClean() {
+		logrus.Fatal("Git status is not clean")
+	}
 
 	return nil
 }
