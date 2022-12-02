@@ -2,7 +2,70 @@
 
 This tool is intended to aid in ingest, generation, and maintenance of the Rancher partner Helm chart repository. It permits fetching the latest published chart from a Helm Repo, Git Repo, or Artifact Hub, automatically setting necessary alterations, and updating the repo index and assets.
 
-### Submission Process
+## Building
+Binaries are provided for macOS (Universal) and Linux (x86_64).
+
+Ensure your host has Golang 1.18 or newer then simply build with
+```bash
+make build
+```
+
+#### macOS Universal Build
+```bash
+make build-darwin-universal
+```
+
+## CI Process
+The majority of the day-to-day CI operation is handled by the 'auto' subcommand which will run a full check against all configured charts, download any updates, and form a commit with the changes.
+
+#### 1. Clone your fork of the [Rancher Partner Charts](github.com/rancher/partner-charts) repository
+```bash
+git clone -b main-source git@github.com:<your_github>/partner-charts.git
+````
+#### 2. Ensure that `git status` is reporting a clean working tree
+```bash
+➜  partner-charts git:(main-source) git status
+On branch main-source
+Your branch is up to date with 'origin/main-source'.
+
+nothing to commit, working tree clean
+```
+#### 3. Pull the latest CI build
+```bash
+scripts/pull-ci-scripts
+```
+#### 4. Run the auto function
+```bash
+bin/partner-charts-ci auto
+```
+#### 5. Run a validation
+```bash
+bin/partner-charts-ci validate
+```
+#### 6. Checkout the 'main' branch
+```bash
+git checkout main
+```
+#### 7. Remove the current `index.yaml` and `assets`
+```bash
+rm -r assets index.yaml
+```
+#### 8. Copy in the updated `index.yaml` and `assets`
+```bash
+git checkout main-source -- index.yaml assets
+```
+#### 9. Add, commit, and push your changes
+```bash
+git add index.yaml assets
+git commit -m "Release Partner Charts"
+git push origin main
+git push origin main-source
+```
+#### 10. Open a Pull-Request for both your `main-source` and `main` branches
+- The `main-source` PR message should auto-populate with the list of additions/updates
+- For the `main` PR you should include the PR number for the related `main-source` PR
+
+## Chart Submission Process
 1. Fork the [Rancher Partner Charts](https://github.com/rancher/partner-charts/) repository
 2. Clone your fork
 3. Ensure the 'main-source' branch is checked out
@@ -23,7 +86,7 @@ HelmChart: kubewarden-controller
 Vendor: SUSE
 DisplayName: Kubewarden Controller
 ChartMetadata:
-  kubeVersion: '1.21-0 - 1.24-0'
+  kubeVersion: '>=1.21-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 EOF
 
@@ -49,8 +112,30 @@ export PACKAGE=suse/kubewarden-controller
 bin/partner-charts-ci auto
 ```
 
-### Overlay
+## Command Reference
+Some commands respect the `PACKAGE` environment variable. This can be used to specify a chart in the format as output by the `list` command, `<vendor>/<chart>`. This environment variable may also be set to just the top level `<vendor>` directory to apply to all charts contained within that vendor.
+| Command | Description |
+| ------------- | ------------- |
+| list | Lists all charts found with an **upstream.yaml** file in the `packages` directory. If `PACKAGE` environment variable is set, will only list chart(s) that match
+| prepare | Included for backwards-compatability. Prepares a copy of the chart in the chart's `packages` directory for modification via GNU patch
+| patch | Included for backwards-compatability. Generates patch files after alterations made following `prepare` command
+| clean | Included for backwards-compatability. Cleans chart created from `prepare` command
+| auto | Automated CI process. Checks all configured charts for updates in upstream, downloads updates, makes necessary alterations, stores chart assets, updates index, and commits changes. If `PACKAGE` environment variable is set, will only check and update specified chart(s)
+| stage | Does everything auto does except create the final commit. Useful for testing. If `PACKAGE` environment variable is set, will only check and updated specified chart(s)
+| unstage | Equivalent to running `git clean -d -f && git checkout -f .`
+| hide | Alters existing chart to add `catalog.cattle.io/hidden: "true"` annotation in index and assets. Accepts one chart name as argument, in the format as printed by `list`
+| [feature](#feature) | Alters existing chart to add, remove, or list charts with `catalog.cattle.io/featured` annotation
+| validate | Validates current repository against configured released repo in `configuration.yaml` to ensure released assets are not being modified
 
+### Subcommands
+#### `feature`
+| Command | Arguments | Description |
+| ------------- | ------------- | ------------- |
+| list | N/A | Lists the current charts with the featured annotation and their associated index. Listed name is the chart name as listed in the `index.yaml`, not the chart name in the `<vendor>/<chart>` format
+| add | Accepts two arguemnts. The chart name in the format as printed by the standard `list` command, `<vendor>/<chart>`, and the index to be featured at (1-5) | Adds the `catalog.cattle.io/featured: <index>` annotaton to a given chart
+| remove | Accepts one chart name as argument, in the format as printed by the standard `list` command, `<vendor>/<chart>` | Removes the `catalog.cattle.io/featured` annotation from a given chart
+
+### Overlay
 Any files placed in the *packages/vendor/chart/overlay* directory will be overlayed onto the chart. This allows for adding or overwriting files within the chart as needed. The primary intended purpose is for adding the app-readme.md and questions.yaml files.
 
 ### Configuration File
@@ -94,7 +179,7 @@ TrackVersions:
   - 1.0
   - 1.1
 ChartMetadata:
-  kubeVersion: '1.21-0 - 1.24-0'
+  kubeVersion:  '>=1.21-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 ```
 
@@ -106,7 +191,7 @@ ArtifactHubPackage: kubewarden-controller
 Vendor: SUSE
 DisplayName: Kubewarden Controller
 ChartMetadata:
-  kubeVersion: '1.21-0 - 1.24-0'
+  kubeVersion: '>=1.21-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 ```
 
@@ -119,7 +204,7 @@ GitSubdirectory: charts/kubewarden-controller
 Vendor: SUSE
 DisplayName: Kubewarden Controller
 ChartMetadata:
-  kubeVersion: '1.21-0 - 1.24-0'
+  kubeVersion: '>=1.21-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 ```
 
@@ -132,6 +217,6 @@ GitSubdirectory: charts/kubewarden-controller
 Vendor: SUSE
 DisplayName: Kubewarden Controller
 ChartMetadata:
-  kubeVersion: '1.21-0 - 1.24-0'
+  kubeVersion: '>=1.21-0'
   icon: https://www.kubewarden.io/images/icon-kubewarden.svg
 ```
