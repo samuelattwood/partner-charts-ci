@@ -65,6 +65,42 @@ git push origin main-source
 - The `main-source` PR message should auto-populate with the list of additions/updates
 - For the `main` PR you should include the PR number for the related `main-source` PR
 
+## Featuring or Hiding a chart
+Featuring and hiding charts is done by appending the `catalog.cattle.io/featured` or `catalog.cattle.io/hidden` chart annotation, respectively. 
+The CI tool is able to perform these changes for you, to easly update the asset gzip, the charts directory, and the index.yaml.
+
+If you open a PR after modifying an existing chart, the `validation` stage will expectedly fail, as the main goal is to ensure no accidental modification of already released charts.
+
+In order to avoid this, somewhere in the title of the PR, include the string `[modified charts]`. This will cause the PR check to skip that part of the validation. For example, when you open the PR you could title it "Hiding suse/kubewarden-controller chart [modified charts]".
+
+To view the currently featured charts
+```bash
+bin/partner-charts-ci feature list
+```
+To feature a chart
+```bash
+bin/partner-charts-ci feature add suse/kubewarden-controller 2
+```
+To remove the featured annotation
+```bash
+bin/partner-charts-ci feature remove suse/kubewarden-controller
+```
+To hide the chart
+```bash
+bin/partner-charts-ci hide suse/kubewarden-controller
+```
+
+After any of those changes, simply add, commit, push - and open a PR with "[modified charts]" in the title
+```bash
+git add index.yaml assets charts
+git commit -m "Hiding suse/kubewarden-controller"
+git push origin main-source
+
+# Open a Pull Request
+```
+
+
+
 ## Chart Submission Process
 1. Fork the [Rancher Partner Charts](https://github.com/rancher/partner-charts/) repository
 2. Clone your fork
