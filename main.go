@@ -304,7 +304,6 @@ func (packageWrapper PackageWrapper) annotate(annotation, value string, remove, 
 			repositoryChartsDir,
 			packageWrapper.ParsedVendor,
 			chartName,
-			version.Version,
 		)
 		helmChart, err := loader.Load(versionPath)
 		if err != nil {
@@ -415,6 +414,10 @@ func commitChanges(updatedList PackageList) error {
 
 	logrus.Info("Committing changes")
 
+	opts := git.AddOptions{
+		All: true,
+	}
+
 	for _, packageWrapper := range updatedList {
 		assetsPath := path.Join(
 			repositoryAssetsDir,
@@ -423,16 +426,20 @@ func commitChanges(updatedList PackageList) error {
 		chartsPath := path.Join(
 			repositoryChartsDir,
 			packageWrapper.ParsedVendor,
-			packageWrapper.SourceMetadata.Versions[0].Name)
+			packageWrapper.Name)
 
 		packagesPath := path.Join(
 			repositoryPackagesDir,
 			packageWrapper.ParsedVendor,
-			packageWrapper.SourceMetadata.Versions[0].Name)
+			packageWrapper.Name)
 
-		wt.Add(assetsPath)
-		wt.Add(chartsPath)
-		wt.Add(packagesPath)
+		opts.Path = assetsPath
+		wt.AddWithOptions(&opts)
+		opts.Path = chartsPath
+		wt.AddWithOptions(&opts)
+		opts.Path = packagesPath
+		wt.AddWithOptions(&opts)
+
 	}
 
 	wt.Add(indexFile)
@@ -716,6 +723,10 @@ func filterVersions(upstreamVersions repo.ChartVersions, fetch string, tracked [
 			logrus.Debug("No newer untracked versions found")
 		}
 	}
+	if len(upstreamVersions) == 0 {
+		err := fmt.Errorf("No versions available in upstream or all versions are marked pre-release")
+		return repo.ChartVersions{}, err
+	}
 	filteredVersions := make(repo.ChartVersions, 0)
 	allStoredVersions, err := getStoredVersions(upstreamVersions[0].Name)
 	if len(tracked) > 0 {
@@ -851,8 +862,12 @@ func conformPackage(packageWrapper PackageWrapper) error {
 
 		} else {
 			packageWrapper.Annotations[annotationCertified] = "partner"
-			packageWrapper.Annotations[annotationReleaseName] = packageWrapper.Name
 			packageWrapper.Annotations[annotationDisplayName] = packageWrapper.DisplayName
+			if packageWrapper.UpstreamYaml.ReleaseName != "" {
+				packageWrapper.Annotations[annotationReleaseName] = packageWrapper.UpstreamYaml.ReleaseName
+			} else {
+				packageWrapper.Annotations[annotationReleaseName] = packageWrapper.Name
+			}
 
 			conform.OverlayChartMetadata(helmChart, packageWrapper.UpstreamYaml.ChartYaml)
 
@@ -901,8 +916,11 @@ func conformPackage(packageWrapper PackageWrapper) error {
 				getRepoRoot(),
 				repositoryChartsDir,
 				packageWrapper.ParsedVendor,
-				helmChart.Metadata.Name,
-				helmChart.Metadata.Version)
+				helmChart.Metadata.Name)
+
+			if _, err := os.Stat(chartsPath); !os.IsNotExist(err) {
+				os.RemoveAll(chartsPath)
+			}
 
 			err = saveChart(helmChart, assetsPath, chartsPath)
 			if err != nil {
@@ -1471,19 +1489,6 @@ func validateRepo(c *cli.Context) {
 		logrus.Error(err)
 	}
 
-	if len(directoryComparison.Modified) > 0 {
-		outString := ""
-		for dirPath := range validatePaths {
-			if len(validatePaths[dirPath].Modified) > 0 {
-				outString += fmt.Sprintf("\n - %s", dirPath)
-				stringJoiner := fmt.Sprintf("\n - %s", dirPath)
-				fileList := strings.Join(validatePaths[dirPath].Modified[:], stringJoiner)
-				outString += fileList
-			}
-		}
-		logrus.Fatalf("Files Modified:%s", outString)
-	}
-
 	if len(directoryComparison.Added) > 0 {
 		outString := ""
 		for dirPath := range validatePaths {
@@ -1508,6 +1513,19 @@ func validateRepo(c *cli.Context) {
 			}
 		}
 		logrus.Warnf("Files Removed:%s", outString)
+	}
+
+	if len(directoryComparison.Modified) > 0 {
+		outString := ""
+		for dirPath := range validatePaths {
+			if len(validatePaths[dirPath].Modified) > 0 {
+				outString += fmt.Sprintf("\n - %s", dirPath)
+				stringJoiner := fmt.Sprintf("\n - %s", dirPath)
+				fileList := strings.Join(validatePaths[dirPath].Modified[:], stringJoiner)
+				outString += fileList
+			}
+		}
+		logrus.Fatalf("Files Modified:%s", outString)
 	}
 
 	logrus.Infof("Successfully validated\n  Upstream: %s\n  Branch: %s\n",

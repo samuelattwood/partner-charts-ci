@@ -207,7 +207,7 @@ func ExportChartDirectory(chart *chart.Chart, targetPath string) error {
 
 	tgz, err := chartutil.Save(chart, tempDir)
 	if err != nil {
-		err = fmt.Errorf("unable to save chart archive to %s", tempDir)
+		err = fmt.Errorf("Unable to save chart archive to %s", tempDir)
 		return err
 	}
 

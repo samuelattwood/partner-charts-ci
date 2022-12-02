@@ -151,17 +151,28 @@ func fetchGitHubRelease(repoUrl string) (string, error) {
 		return "", err
 	}
 	ctx := context.Background()
-	opt := &github.ListOptions{}
+	opt := &github.ListOptions{Page: 1, PerPage: 50}
 	latestRelease, _, err := client.Repositories.GetLatestRelease(ctx, gitHubUser, gitHubRepo)
 	if err != nil {
 		return "", err
 	}
-	tags, _, _ := client.Repositories.ListTags(ctx, gitHubUser, gitHubRepo, opt)
-	for _, tag := range tags {
-		if tag.GetName() == *latestRelease.TagName {
-			releaseCommit = *tag.GetCommit().SHA
+	for releaseCommit == "" {
+		tags, _, _ := client.Repositories.ListTags(ctx, gitHubUser, gitHubRepo, opt)
+		if len(tags) == 0 {
 			break
 		}
+		opt.Page += 1
+		for _, tag := range tags {
+			if tag.GetName() == *latestRelease.TagName {
+				releaseCommit = *tag.GetCommit().SHA
+				break
+			}
+		}
+	}
+
+	if releaseCommit == "" {
+		err = fmt.Errorf("Commit not found for GitHub release")
+		return "", err
 	}
 
 	logrus.Debugf("Fetching GitHub Release: %s (%s)\n", *latestRelease.Name, releaseCommit)
@@ -290,16 +301,26 @@ func fetchUpstreamGit(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, err
 }
 
 func FetchUpstream(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
+	var err error
+	chartSourceMetadata := ChartSourceMetadata{}
 	if upstreamYaml.AHRepoName != "" && upstreamYaml.AHPackageName != "" {
-		return fetchUpstreamArtifacthub(upstreamYaml)
+		chartSourceMetadata, err = fetchUpstreamArtifacthub(upstreamYaml)
 	} else if upstreamYaml.HelmRepoUrl != "" && upstreamYaml.HelmChart != "" {
-		return fetchUpstreamHelmrepo(upstreamYaml)
+		chartSourceMetadata, err = fetchUpstreamHelmrepo(upstreamYaml)
 	} else if upstreamYaml.GitRepoUrl != "" {
-		return fetchUpstreamGit(upstreamYaml)
+		chartSourceMetadata, err = fetchUpstreamGit(upstreamYaml)
 	} else {
 		err := errors.New("no valid repo options found")
 		return ChartSourceMetadata{}, err
 	}
+
+	if upstreamYaml.ChartYaml.Name != "" {
+		for _, version := range chartSourceMetadata.Versions {
+			version.Name = upstreamYaml.ChartYaml.Name
+		}
+	}
+
+	return chartSourceMetadata, err
 }
 
 func LoadChartFromUrl(url string) (*chart.Chart, error) {
