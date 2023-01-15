@@ -56,7 +56,7 @@ func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata
 	indexYaml := repo.NewIndexFile()
 	chartSourceMeta := ChartSourceMetadata{}
 
-	if !regexp.MustCompile("^http?://").MatchString(url) {
+	if !regexp.MustCompile("^https?://").MatchString(url) {
 		return chartSourceMeta, fmt.Errorf("%s (%s) invalid URL: %s", upstreamYaml.Vendor, upstreamYaml.HelmChart, url)
 	}
 
