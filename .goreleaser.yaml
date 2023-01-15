@@ -1,0 +1,20 @@
+project_name: partner-charts-ci
+
+builds:
+  - main: main.go
+    id: partner-charts-ci
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+universal_binaries:
+  - replace: true
+
+archives:
+  - name_template: '{{ .Binary }}-{{ .Os }}-{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}'
+    format: binary
