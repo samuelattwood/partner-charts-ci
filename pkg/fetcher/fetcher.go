@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/go-git/go-git/v5"
@@ -49,26 +50,31 @@ type ChartSourceMetadata struct {
 
 // Constructs Chart Metadata for latest version published to Helm Repository
 func fetchUpstreamHelmrepo(upstreamYaml parse.UpstreamYaml) (ChartSourceMetadata, error) {
+	upstreamYaml.HelmRepoUrl = strings.TrimSuffix(upstreamYaml.HelmRepoUrl, "/")
 	url := fmt.Sprintf("%s/index.yaml", upstreamYaml.HelmRepoUrl)
 
 	indexYaml := repo.NewIndexFile()
 	chartSourceMeta := ChartSourceMetadata{}
 
+	if !regexp.MustCompile("^http?://").MatchString(url) {
+		return chartSourceMeta, fmt.Errorf("%s (%s) invalid URL: %s", upstreamYaml.Vendor, upstreamYaml.HelmChart, url)
+	}
+
 	chartSourceMeta.Source = "HelmRepo"
 
 	resp, err := http.Get(url)
 	if err != nil {
-		logrus.Debug(err)
+		return chartSourceMeta, err
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logrus.Debug(err)
+		return chartSourceMeta, err
 	}
 
 	err = yaml.Unmarshal([]byte(body), indexYaml)
 	if err != nil {
-		logrus.Debug(err)
+		return chartSourceMeta, err
 	}
 	if _, ok := indexYaml.Entries[upstreamYaml.HelmChart]; !ok {
 		return chartSourceMeta, fmt.Errorf("Helm chart: %s/%s not found", upstreamYaml.HelmRepoUrl, upstreamYaml.HelmChart)

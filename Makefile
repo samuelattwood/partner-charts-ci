@@ -3,13 +3,13 @@ BINARY_NAME=partner-charts-ci
 VERSION := $(shell git describe --tags)
 COMMIT_HASH := $(shell git rev-parse --short HEAD)
 
-GO_LDFLAGS :=  $(shell echo \-ldflags \"-s -w -X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT_HASH)'\")
+GO_LDFLAGS :=  $(shell echo \-ldflags \"-s -w -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT_HASH)'\")
 
 default: build
 
 build:
 	mkdir -p bin
-	go build -o bin/$(BINARY_NAME) -ldflags "-s -w -X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT_HASH)'"
+	go build -o bin/$(BINARY_NAME) $(GO_LDFLAGS)
 
 build-darwin-amd64:
 	GOOS=darwin \

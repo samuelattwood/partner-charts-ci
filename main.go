@@ -50,8 +50,8 @@ const (
 )
 
 var (
-	Version = "v0.0.0"
-	Commit  = "HEAD"
+	version = "v0.0.0"
+	commit  = "HEAD"
 )
 
 // PackageWrapper is a representation of relevant package metadata
@@ -317,7 +317,7 @@ func (packageWrapper PackageWrapper) annotate(annotation, value string, remove, 
 		}
 
 		if modified {
-			logrus.Debugf("Modified annotations of %s\n", packageWrapper.Name)
+			logrus.Debugf("Modified annotations of %s (%s)\n", packageWrapper.Name, helmChart.Metadata.Version)
 
 			err = os.RemoveAll(versionPath)
 			if err != nil {
@@ -1563,7 +1563,7 @@ func main() {
 
 	app := cli.NewApp()
 	app.Name = "partner-charts-ci"
-	app.Version = fmt.Sprintf("%s (%s)", Version, Commit)
+	app.Version = fmt.Sprintf("%s (%s)", version, commit)
 	app.Usage = "Assists in submission and maintenance of partner Helm charts"
 
 	app.Commands = []cli.Command{
