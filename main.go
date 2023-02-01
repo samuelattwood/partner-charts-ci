@@ -661,20 +661,21 @@ func collectNonStoredVersions(versions repo.ChartVersions, storedVersions repo.C
 		}
 		if !stored {
 			if fetch == strings.ToLower("newer") {
-				var semVer, storedSemVer *semver.Version
+				var semVer *semver.Version
 				semVer, err := semver.NewVersion(version.Version)
 				if err != nil {
 					logrus.Error(err)
 					continue
 				}
 				if len(storedVersions) > 0 {
-					storedSemVer, err = semver.NewVersion(storedVersions[0].Version)
+					strippedStoredLatest := conform.StripPackageVersion(storedVersions[0].Version)
+					storedLatestSemVer, err := semver.NewVersion(strippedStoredLatest)
 					if err != nil {
 						logrus.Error(err)
 						continue
 					}
-					if semVer.GreaterThan(storedSemVer) {
-						logrus.Debugf("Version: %s > %s\n", semVer.String(), storedSemVer.String())
+					if semVer.GreaterThan(storedLatestSemVer) {
+						logrus.Debugf("Version: %s > %s\n", semVer.String(), storedVersions[0].Version)
 						nonStoredVersions = append(nonStoredVersions, version)
 					}
 				} else {
