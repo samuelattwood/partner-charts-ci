@@ -37,8 +37,8 @@ type ArtifactHubApiHelmRepo struct {
 
 type ArtifactHubApiHelm struct {
 	ContentUrl string                 `json:"content_url"`
+	Name       string                 `json:"name"`
 	Repository ArtifactHubApiHelmRepo `json:"repository"`
-	Version    string                 `json:"version"`
 }
 
 type ChartSourceMetadata struct {
@@ -100,39 +100,38 @@ func fetchUpstreamArtifacthub(upstreamYaml parse.UpstreamYaml) (ChartSourceMetad
 	url := fmt.Sprintf("%s/%s/%s", artifactHubApi, upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
 
 	apiResp := ArtifactHubApiHelm{}
-	chartSourceMeta := ChartSourceMetadata{}
-
-	chartSourceMeta.Source = "ArtifactHub"
 
 	resp, err := http.Get(url)
 	if err != nil {
-		logrus.Debug(err)
+		return ChartSourceMetadata{}, err
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logrus.Debug(err)
+		return ChartSourceMetadata{}, err
 	}
 
-	json.Unmarshal([]byte(body), &apiResp)
+	err = json.Unmarshal([]byte(body), &apiResp)
+	if err != nil {
+		return ChartSourceMetadata{}, err
+	}
+
 	if apiResp.ContentUrl == "" {
-		return chartSourceMeta, fmt.Errorf("ArtifactHub package: %s/%s not found", upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
+		return ChartSourceMetadata{}, fmt.Errorf("ArtifactHub package: %s/%s not found", upstreamYaml.AHRepoName, upstreamYaml.AHPackageName)
 	}
 
-	versionMetadata := chart.Metadata{
-		Version: apiResp.Version,
+	upstreamYaml.HelmRepoUrl = apiResp.Repository.Url
+	upstreamYaml.HelmChart = apiResp.Name
+
+	chartSourceMeta, err := fetchUpstreamHelmrepo(upstreamYaml)
+	if err != nil {
+		return ChartSourceMetadata{}, err
 	}
 
-	version := repo.ChartVersion{
-		Metadata: &versionMetadata,
-		URLs:     []string{apiResp.ContentUrl},
-	}
-
-	versions := repo.ChartVersions{&version}
-
-	chartSourceMeta.Versions = versions
+	chartSourceMeta.Source = "ArtifactHub"
 
 	return chartSourceMeta, nil
+
 }
 
 func getGitHubUserAndRepo(gitUrl string) (string, string, error) {
