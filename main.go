@@ -1457,7 +1457,6 @@ func autoUpdate(c *cli.Context) {
 func validateRepo(c *cli.Context) {
 	validatePaths := map[string]validate.DirectoryComparison{
 		"assets": {},
-		"charts": {},
 	}
 
 	excludeFiles := make(map[string]struct{})
