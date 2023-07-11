@@ -1379,6 +1379,7 @@ func listFeaturedCharts(c *cli.Context) {
 		if err != nil {
 			logrus.Fatal(err)
 		}
+		featuredIndex--
 		if featuredSorted[featuredIndex] != "" {
 			indexConflict = true
 			featuredSorted[featuredIndex] += fmt.Sprintf(", %s", chartName)
@@ -1392,7 +1393,7 @@ func listFeaturedCharts(c *cli.Context) {
 
 	for i, chartName := range featuredSorted {
 		if featuredSorted[i] != "" {
-			fmt.Printf("%d: %s\n", i, chartName)
+			fmt.Printf("%d: %s\n", i+1, chartName)
 		}
 	}
 
